@@ -10,5 +10,12 @@ module.exports = defineConfig([
   {
     files: ['**/*.test.{ts,tsx,js}', 'jest.config.js', 'scripts/**', 'e2e/**'],
     languageOptions: { globals: { jest: 'readonly', describe: 'readonly', it: 'readonly', expect: 'readonly', beforeAll: 'readonly', afterAll: 'readonly', beforeEach: 'readonly', afterEach: 'readonly', test: 'readonly' } },
+    // jest.mock() factories are hoisted above imports and must use require().
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    // Node-only test infrastructure (not bundled by Metro).
+    files: ['tests/**'],
+    rules: { 'expo/no-dynamic-env-var': 'off' },
   },
 ]);

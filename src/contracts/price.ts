@@ -155,6 +155,10 @@ export interface BasketLine {
   overage: { amount: number; unit: BaseUnit } | null; // only when > 25%
   age_days: number | null;
   promotion_applied: boolean;
+  /** End of the applied promotion ("t/m zo 26 okt"); null when no promotion was applied. */
+  promotion_valid_until: IsoTimestamp | null;
+  /** Shelf price per kg / l / stuk of the chosen package ("€1,29/kg"); null when status = unknown. */
+  unit_price: { cents: number; per: 'kg' | 'l' | 'stuk' } | null;
 }
 
 export interface StoreBasket {

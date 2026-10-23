@@ -161,12 +161,30 @@ export type PullChangesResponse =
   | {
       ok: true;
       household: HouseholdRow;
-      /** Rows with server_seq > since, ascending by server_seq. Includes tombstones unless since = 0. */
+      /**
+       * Rows with server_seq > since, ascending by server_seq. Tombstones are left out only when
+       * since = 0; later pages of an initial pull (since > 0) can contain tombstones: upsert them.
+       */
       items: ListItemRow[];
-      /** Cursor to store: max server_seq in `items`, or since/last_seq when empty. */
+      /** Cursor to store: max server_seq in `items`, or since/last_seq when empty. 0 when reset_required. */
       server_seq: number;
       has_more: boolean;
-      /** true when since_seq is older than the tombstone purge horizon: wipe local items, pull from 0. */
+      /**
+       * true when since_seq < purged_before_seq (the highest purged tombstone seq) or since_seq is ahead
+       * of last_seq (corrupt/foreign cursor). Then server_seq = 0 and items = []: wipe local items
+       * (keep the outbox) and pull from 0.
+       */
       reset_required: boolean;
     }
   | { ok: false; error: 'not_member' | 'not_authenticated' };
+
+/**
+ * Private broadcast `membership_changed` on topic `user:<uid>` (realtime.messages RLS: own topic only),
+ * sent for every deleted membership row of that user. After accept_invite the joiner also receives
+ * `household_deleted` for its old solo household: clients ignore broadcasts for a household that is
+ * not the current one. Like every realtime event it is only a nudge to pull.
+ */
+export interface MembershipChangedBroadcast {
+  household_id: Uuid;
+  reason: 'removed' | 'left' | 'household_deleted' | 'account_deleted';
+}
