@@ -115,7 +115,11 @@ describe('Inloggen', () => {
   it('stores a typed invite code for after sign-in', async () => {
     const backend = await setup();
     await act(async () => fireEvent.press(screen.getByLabelText('Ik heb een uitnodigingscode')));
+    // D2-05: no code-like placeholder, and "Doorgaan" only once 6 characters are typed.
+    expect(screen.getByTestId('invite-code-input').props.placeholder).toBe('6 tekens');
     await act(async () => fireEvent.changeText(screen.getByTestId('invite-code-input'), 'k7q'));
+    expect(screen.getByLabelText('Doorgaan').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => fireEvent.changeText(screen.getByTestId('invite-code-input'), 'k7qm4!'));
     await act(async () => fireEvent.press(screen.getByLabelText('Doorgaan')));
     expect(screen.getByText('Een code heeft 6 tekens, bijvoorbeeld K7QM4Z.')).toBeTruthy();
     await act(async () => fireEvent.changeText(screen.getByTestId('invite-code-input'), 'k7qm4z'));

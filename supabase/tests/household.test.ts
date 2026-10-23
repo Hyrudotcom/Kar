@@ -223,7 +223,7 @@ describe('preview_invite / accept_invite', () => {
     await admin(`delete from private.invite_attempts where ip = '203.0.113.9'`);
     expect((await rpc(u, 'preview_invite', { p_code: randomCode() }, { ip: '203.0.113.9' })).error).toBe('invalid_code');
     const logged = await admin(`select ip from private.invite_attempts where user_id = $1 order by id`, [u]);
-    expect(logged.map((x) => x.ip)).toEqual([ip, '203.0.113.9']);
+    expect(logged.map((x) => x.ip)).toEqual(['203.0.113.9']); // the refused request is not logged (round 2)
   });
 
   test('rate limit per code: 10 failed per hour', async () => {
@@ -272,24 +272,51 @@ describe('preview_invite / accept_invite', () => {
     expect((await rpc(u, 'preview_invite', { p_code: randomCode() })).error).toBe('invalid_code');
   });
 
-  test('household block: 20 failed attempts on its expired/revoked codes block joining it for the hour', async () => {
-    const T = await createHousehold();
-    const old = await rpc(T.owner, 'create_invite', { p_household_id: T.hid });
-    const fresh = await rpc(T.owner, 'create_invite', { p_household_id: T.hid, p_replace: true });
-    // 20 attempts on the revoked code by different users (the per-code limit allows 10, so spread over two codes)
-    const old2 = await rpc(T.owner, 'create_invite', { p_household_id: T.hid, p_replace: true });
-    const current = await rpc(T.owner, 'create_invite', { p_household_id: T.hid, p_replace: true });
-    for (const code of [old.code, fresh.code]) {
-      for (let i = 0; i < 10; i++) {
-        const u = await createUser();
-        expect((await rpc(u, 'preview_invite', { p_code: code })).error).toBe('expired_code');
+  test('round 2: refused (rate_limited) requests are not counted: one account cannot lock out everyone', async () => {
+    const attacker = await createUser();
+    try {
+      let refused = 0;
+      for (let i = 0; i < 300; i++) {
+        const r = await rpc(attacker, 'preview_invite', { p_code: randomCode() });
+        if (r.error === 'rate_limited') refused++;
       }
+      expect(refused).toBe(290); // 10 real lookups, then refused
+      const counted = await admin(`select count(*)::int as n from private.invite_attempts where user_id = $1`, [attacker]);
+      expect(counted[0].n).toBe(10);
+      // Another user with a valid, fresh code is not affected.
+      const T = await createHousehold();
+      const inv = await rpc(T.owner, 'create_invite', { p_household_id: T.hid });
+      const u = await createUser();
+      expect((await rpc(u, 'preview_invite', { p_code: inv.code })).ok).toBe(true);
+      expect((await rpc(u, 'accept_invite', { p_code: inv.code })).ok).toBe(true);
+      // The attacker's own lockout ends after 10 minutes even though they kept retrying.
+      await admin(`update private.invite_attempts set at = now() - interval '11 minutes' where user_id = $1`, [attacker]);
+      expect((await rpc(attacker, 'preview_invite', { p_code: randomCode() })).error).toBe('invalid_code');
+    } finally {
+      await admin(`delete from private.invite_attempts where user_id = $1`, [attacker]);
     }
-    const u = await createUser();
-    expect(await rpc(u, 'accept_invite', { p_code: current.code })).toEqual({ ok: false, error: 'rate_limited' });
-    expect(await rpc(u, 'preview_invite', { p_code: old2.code })).toEqual({ ok: false, error: 'rate_limited' });
-    await admin(`update private.invite_attempts set at = now() - interval '61 minutes' where household_id = $1`, [T.hid]);
-    expect((await rpc(u, 'accept_invite', { p_code: current.code })).ok).toBe(true);
+  });
+
+  test('round 2: a removed member looking up old codes cannot lock the household\'s current code', async () => {
+    const T = await createHousehold();
+    const ex = await createUser();
+    const r1 = await rpc(T.owner, 'create_invite', { p_household_id: T.hid });
+    expect((await rpc(ex, 'accept_invite', { p_code: r1.code })).ok).toBe(true);
+    const r2 = await rpc(T.owner, 'create_invite', { p_household_id: T.hid, p_replace: true });
+    expect((await rpc(T.owner, 'remove_member', { p_household_id: T.hid, p_user_id: ex })).ok).toBe(true);
+    const r3 = await rpc(T.owner, 'create_invite', { p_household_id: T.hid });
+    expect(r3.code).not.toBe(r2.code);
+    await admin(`update private.invite_attempts set at = now() - interval '11 minutes' where user_id = $1`, [ex]); // their join
+    for (let i = 0; i < 10; i++) expect((await rpc(ex, 'preview_invite', { p_code: r1.code })).error).toBe('expired_code');
+    await admin(`update private.invite_attempts set at = now() - interval '11 minutes' where user_id = $1`, [ex]);
+    for (let i = 0; i < 10; i++) expect((await rpc(ex, 'preview_invite', { p_code: r2.code })).error).toBe('expired_code');
+    const partner = await createUser();
+    expect((await rpc(partner, 'preview_invite', { p_code: r3.code })).ok).toBe(true);
+    expect((await rpc(partner, 'accept_invite', { p_code: r3.code })).ok).toBe(true);
+    // "Code vervangen" afterwards works too.
+    const r4 = await rpc(T.owner, 'create_invite', { p_household_id: T.hid, p_replace: true });
+    const next = await createUser();
+    expect((await rpc(next, 'accept_invite', { p_code: r4.code })).ok).toBe(true);
   });
 
   test('concurrent accepts of the same user do not double-join', async () => {

@@ -671,14 +671,17 @@ class Engine implements GoedSyncEngine {
         payload = (entry.mutation as Mutation & { kind: 'add_item' }).payload;
         meta = entry.localMeta;
       } else if (entry && entry.state === 'pending') {
-        // Sent, but no answer yet (e.g. the response was lost): the server may already have it. Keep
-        // the add and queue the inverse of what the local simulation did; the server replays the add
-        // first (FIFO per item) and resolves the alias of its id.
-        payload = (entry.mutation as Mutation & { kind: 'add_item' }).payload;
-        meta = entry.localMeta;
-        const outcome = meta?.outcome;
-        const status = outcome === 'merged' || outcome === 'restored' ? outcome : 'applied';
-        result = { id: entry.mutation.id, status, item_id: meta?.targetId ?? payload.id };
+        // Sent, but no answer yet (e.g. the response was lost): the server may have applied it as a
+        // new item, merged it into someone else's item, or restored a checked one. Never guess: hide
+        // it now and queue the exact inverse once the idempotent re-send is answered (applyResults).
+        if (!entry.localMeta?.revertOnAck) {
+          const marked: LocalMeta = { ...(entry.localMeta ?? {}), revertOnAck: true };
+          await this.store.updateLocalMeta(entry.mutation.id, marked);
+          entry.localMeta = marked;
+          this.recompute();
+          this.schedulePush(0);
+        }
+        return null;
       } else {
         const log = await this.store.getAckLog(mutationId);
         if (log && log.kind === 'add_item') {
@@ -703,6 +706,20 @@ class Engine implements GoedSyncEngine {
     } else if (result.status === 'applied') {
       await this.deleteItem(target);
     }
+  }
+
+  /** The inverse of an acknowledged add, from the server's real result (see LocalMeta.revertOnAck). */
+  private inverseOfAdd(payload: MutationPayloads['add_item'], result: MutationResult, meta: LocalMeta | null): Mutation[] {
+    const target = result.item_id ?? payload.id;
+    if (result.status === 'merged') return [this.mutation('increment_quantity', { item_id: target, delta: -payload.quantity })];
+    if (result.status === 'restored') {
+      const out = [this.mutation('set_checked', { item_id: target, checked: true })];
+      if (meta?.outcome === 'restored' && meta.targetId === target && meta.prevQuantity !== undefined) {
+        out.push(this.mutation('update_item', { item_id: target, fields: { quantity: meta.prevQuantity } }));
+      }
+      return out;
+    }
+    return [this.mutation('delete_item', { item_id: target })];
   }
 
   /** Undo of "Wissen": true when the server did not tombstone this id for our clear (someone else did). */
@@ -1014,8 +1031,28 @@ class Engine implements GoedSyncEngine {
         if (r && (status === 'applied' || status === 'merged' || status === 'restored')) {
           const ackedSeq = typeof r.server_seq === 'number' ? r.server_seq : resp.server_seq;
           await this.store.markAcked(m.id, ackedSeq, r);
+          let meta = e.localMeta;
+          if (m.kind === 'add_item' && meta?.revertOnAck) {
+            // Undone while unanswered: now that the real outcome is known, queue its exact inverse
+            // in the same transaction (a crash cannot lose or double it).
+            meta = { ...meta };
+            delete meta.revertOnAck;
+            await this.store.updateLocalMeta(m.id, meta);
+            for (const inv of this.inverseOfAdd(m.payload, r, meta)) {
+              const target = mutationTargets(inv)[0];
+              const invMeta: LocalMeta = { outcome: 'updated', targetId: target };
+              const seq = await this.store.insertOutbox(inv, invMeta);
+              after.push(() => {
+                this.outbox.push({ seq, mutation: inv, state: 'pending', ackedSeq: null, result: null, attempts: 0, nextAttemptAt: 0, lastError: null, localMeta: invMeta });
+              });
+            }
+            const cleared = meta;
+            after.push(() => {
+              e.localMeta = cleared;
+            });
+          }
           if (m.kind === 'add_item' || m.kind === 'clear_checked') {
-            await this.store.logAck({ id: m.id, kind: m.kind, payload: m.payload, result: r, localMeta: e.localMeta, ackedAt: now });
+            await this.store.logAck({ id: m.id, kind: m.kind, payload: m.payload, result: r, localMeta: meta, ackedAt: now });
           }
           state.set(m.id, { state: 'acked', payload: m.payload });
           after.push(() => {
@@ -1062,6 +1099,12 @@ class Engine implements GoedSyncEngine {
               });
               continue;
             }
+          }
+          if (m.kind === 'add_item' && e.localMeta?.revertOnAck) {
+            // Undone and never applied: nothing to report.
+            await this.store.deleteOutbox([m.id]);
+            removed.add(m.id);
+            continue;
           }
           const reason = r.reason ?? 'invalid';
           const f: FailedMutation = { mutationId: m.id, kind: m.kind, itemName: this.itemNameFor(m), reason, failedAt: now };
@@ -1155,28 +1198,10 @@ class Engine implements GoedSyncEngine {
     // answer of a request that was in flight is expected then and must not start the removal flow.
     if (this.membershipLost || this.stopped) return;
     this.membershipLost = true;
-    await this.lock.run(async () => {
-      const now = this.clock.now();
-      const fails: FailedMutation[] = [];
-      await this.deps.db.transaction(async () => {
-        for (const e of this.outbox) {
-          if (e.state !== 'pending') continue;
-          const f: FailedMutation = {
-            mutationId: e.mutation.id,
-            kind: e.mutation.kind,
-            itemName: this.itemNameFor(e.mutation),
-            reason: 'not_member',
-            failedAt: now,
-          };
-          await this.store.insertFailed(f, e.mutation);
-          fails.push(f);
-        }
-        await this.deps.db.run('delete from outbox');
-      });
-      this.outbox = [];
-      this.failed = [...this.failed, ...fails];
-      this.recompute();
-    });
+    // The outbox is kept as it is: the session asks the server whether this user was removed (then
+    // unsent() lists these changes before the file is wiped) or switched household on another
+    // device (then a new engine on this file re-addresses them to the new household, see start()).
+    await this.lock.run(async () => undefined);
     this.clearTimers();
     for (const u of this.unsubs.splice(0)) {
       try {

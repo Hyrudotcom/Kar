@@ -63,7 +63,7 @@ describe('Huishouden', () => {
     const { backend, sanne, hh } = await ownerSetup();
     expect(screen.getByText('jan (jij)')).toBeTruthy();
     expect(screen.getByText('Eigenaar')).toBeTruthy();
-    expect(screen.getByText('SA')).toBeTruthy();
+    expect(screen.getByText('S')).toBeTruthy(); // one letter for a single first name (D2-21)
     expect(screen.getByText('Ingelogd als jan@voorbeeld.nl')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByLabelText('Sanne verwijderen')));
     expect(screen.getByText('Sanne verwijderen uit Thuis?')).toBeTruthy();
@@ -117,7 +117,7 @@ describe('Huishouden', () => {
   it('leaving is disabled offline with an explanation', async () => {
     const { backend } = await ownerSetup();
     await act(async () => backend.connectivity.set(false));
-    expect(screen.getByText('Verlaten kan alleen online')).toBeTruthy();
+    expect(screen.getByText('Verlaten en account verwijderen kan alleen online')).toBeTruthy();
     expect(screen.getByLabelText('Huishouden verlaten').props.accessibilityState.disabled).toBe(true);
   });
 

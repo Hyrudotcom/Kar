@@ -146,7 +146,7 @@ d('engine x real Postgres RPCs', () => {
     expect(anna.names()).toEqual(['Y:1']);
   });
 
-  test('removed member: not_member moves the outbox to failed and fires onMembershipLost', async () => {
+  test('removed member: not_member keeps the outbox for unsent() and fires onMembershipLost', async () => {
     const { anna, bram, hh, b } = await sharedHousehold();
     const lost = jest.fn();
     bram.engine.onMembershipLost(lost);
@@ -160,7 +160,53 @@ d('engine x real Postgres RPCs', () => {
     bram.online();
     await bram.engine.syncNow();
     expect(lost).toHaveBeenCalledTimes(1);
-    expect(bram.engine.getStatus().failed.map((f) => [f.itemName, f.reason])).toEqual([['Wijn', 'not_member']]);
+    expect(bram.engine.unsent()).toMatchObject({ count: 1, text: expect.stringContaining('Wijn') });
+  });
+
+  test('household switched on another device: the next engine on the same file re-addresses the outbox via server aliases', async () => {
+    const j = await createUser();
+    const s = await createUser();
+    const tj = new PgSyncTransport(pool, j);
+    const ts = new PgSyncTransport(pool, s);
+    const own = (await tj.call<{ household: { id: Uuid } }>('select public.create_household() as r', [])).household.id;
+    const target = (await ts.call<{ household: { id: Uuid } }>('select public.create_household() as r', [])).household.id;
+    const invite = await ts.call<{ code: string }>('select public.create_invite(p_household_id => $1) as r', [target]);
+    const dir = tempDir();
+    const clock = new FakeClock();
+    const open = async (hh: Uuid) => {
+      const connectivity = new ManualConnectivity(true);
+      const transport = new PgSyncTransport(pool, j);
+      const db = await new BetterSqliteFactory(dir).open(j);
+      const engine = createSyncEngine({ db, transport, connectivity, userId: j, householdId: hh, clock, uuid }, { random: () => 0.5 });
+      await engine.start();
+      await engine.syncNow();
+      return { engine, transport, connectivity };
+    };
+    const phoneB = await open(own);
+    const melk = await phoneB.engine.addItem({ name: 'Melk', quantity: 2, unit: 'stuk' });
+    await phoneB.engine.syncNow();
+    phoneB.transport.online = false;
+    phoneB.connectivity.set(false);
+    await phoneB.engine.setChecked(melk.itemId, true); // an edit of an item the accept will move
+    await phoneB.engine.addItem({ name: 'Brood', quantity: 1, unit: 'stuk' });
+    // Phone A accepts the invite: open items move to the new household (with aliases), the old one is deleted.
+    const accepted = await tj.call<{ ok: boolean; moved_items: number }>('select public.accept_invite(p_code => $1) as r', [invite.code]);
+    expect(accepted).toMatchObject({ ok: true, moved_items: 1 });
+    const lost = jest.fn();
+    phoneB.engine.onMembershipLost(lost);
+    phoneB.transport.online = true;
+    phoneB.connectivity.set(true);
+    await phoneB.engine.syncNow();
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(phoneB.engine.unsent().count).toBe(2); // kept, not thrown away
+    await phoneB.engine.dispose();
+
+    const next = await open(target);
+    await next.engine.syncNow();
+    expect(next.engine.getStatus()).toMatchObject({ pendingCount: 0, failed: [] });
+    expect(next.engine.getSnapshot().open.map((i) => i.name)).toEqual(['Brood']);
+    expect(next.engine.getSnapshot().checked.map((i) => `${i.name}:${i.quantity}`)).toEqual(['Melk:2']);
+    await next.engine.dispose();
   });
 
   test('reset_required after a real purge: local list rebuilt, outbox kept', async () => {

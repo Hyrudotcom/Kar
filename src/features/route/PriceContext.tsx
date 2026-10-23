@@ -36,6 +36,26 @@ export function isComparisonAvailable(data: PriceDataset, now = Date.now()): boo
 
 /** The opt-in is also kept on the device, so it is known offline (cached comparison, rule 9). */
 const optInKey = (userId: string) => `price_opt_in_${userId}`;
+/** Whether the last load for this household found a comparison possible ('1') or not ('0'). */
+const availableKey = (householdId: string) => `price_available_${householdId}`;
+
+/** Price reads never hold the tab hostage: a stalled connection counts as a failed load. */
+export const PRICE_LOAD_TIMEOUT_MS = 8_000;
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e: unknown) => {
+        clearTimeout(t);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
 
 interface Loaded {
   key: string;
@@ -45,6 +65,11 @@ interface Loaded {
   failed: boolean;
 }
 
+/**
+ * The tab never waits on the network to say "Geen geverifieerde prijzen beschikbaar": unless the last
+ * load on this device found verified prices for this household, that state shows at once while the
+ * dataset loads in the background. The opt-in is only fetched once a comparison is possible.
+ */
 export function PriceProvider({ children }: { children: ReactNode }) {
   const backend = useBackend();
   const { state } = useSession();
@@ -54,11 +79,24 @@ export function PriceProvider({ children }: { children: ReactNode }) {
   const [nonce, setNonce] = useState(0);
   const key = userId && householdId ? `${userId}|${householdId}|${nonce}` : null;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [hint, setHint] = useState<{ householdId: string; available: boolean } | null>(null);
   const [optIn, setOptInState] = useState<{ userId: string; value: boolean } | null>(null);
   const current = loaded && loaded.key === key ? loaded : null;
-  const optInKnown = !!optIn && optIn.userId === userId;
-  const status: PriceState['status'] = !key ? 'idle' : current && optInKnown ? current.status : 'loading';
   const dataset = current?.dataset ?? null;
+  const available = useMemo(() => (dataset ? isComparisonAvailable(dataset) : false), [dataset]);
+  const optInKnown = !!optIn && optIn.userId === userId;
+  // Opt-in matters only once a comparison is possible (or a cached one may be shown offline).
+  const needOptIn = available || current?.status === 'error';
+  const hintKnown = !!hint && hint.householdId === householdId;
+  const status: PriceState['status'] = !key
+    ? 'idle'
+    : current
+      ? needOptIn && !optInKnown
+        ? 'loading'
+        : current.status
+      : hintKnown && !hint!.available
+        ? 'ready'
+        : 'loading';
   const seq = useRef(0);
   const failedRef = useRef(false);
   const failed = !!current?.failed;
@@ -67,12 +105,29 @@ export function PriceProvider({ children }: { children: ReactNode }) {
   }, [failed]);
 
   useEffect(() => {
+    if (!householdId) return;
+    let alive = true;
+    void withTimeout(backend.kv.getItem(availableKey(householdId)), 1_000)
+      .catch(() => null)
+      .then((v) => {
+        if (alive) setHint({ householdId, available: v === '1' });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [backend, householdId]);
+
+  useEffect(() => {
     if (!key || !userId || !householdId) return;
     const my = ++seq.current;
     void (async () => {
       try {
-        const data = await backend.prices.loadDataset(householdId);
-        if (my === seq.current) setLoaded({ key, status: 'ready', dataset: data, failed: false });
+        const data = await withTimeout(backend.prices.loadDataset(householdId), PRICE_LOAD_TIMEOUT_MS);
+        if (my !== seq.current) return;
+        setLoaded({ key, status: 'ready', dataset: data, failed: false });
+        const ok = isComparisonAvailable(data);
+        setHint({ householdId, available: ok });
+        await backend.kv.setItem(availableKey(householdId), ok ? '1' : '0').catch(() => undefined);
       } catch {
         // Only a comparison shown before (cached) proves that prices exist and are now missing.
         const cache = await engine?.readPriceCache().catch(() => null);
@@ -84,12 +139,12 @@ export function PriceProvider({ children }: { children: ReactNode }) {
   // Opt-in: server value when reachable, else the last value seen on this device. Never reset by a
   // failed dataset load.
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !needOptIn) return;
     let alive = true;
     void (async () => {
       let value: boolean;
       try {
-        value = await backend.prices.getOptIn(userId);
+        value = await withTimeout(backend.prices.getOptIn(userId), PRICE_LOAD_TIMEOUT_MS);
         await backend.kv.setItem(optInKey(userId), value ? '1' : '0').catch(() => undefined);
       } catch {
         value = (await backend.kv.getItem(optInKey(userId)).catch(() => null)) === '1';
@@ -99,7 +154,7 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [backend, userId, nonce]);
+  }, [backend, userId, nonce, needOptIn]);
 
   // Back online after a failed load: load again by itself (no "Opnieuw proberen" needed).
   useEffect(
@@ -152,13 +207,13 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       dataset,
-      available: dataset ? isComparisonAvailable(dataset) : false,
+      available,
       optIn: optInValue,
       setOptIn,
       reload: () => setNonce((n) => n + 1),
       setOverride,
     }),
-    [status, dataset, optInValue, setOptIn, setOverride],
+    [status, dataset, available, optInValue, setOptIn, setOverride],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -59,7 +59,7 @@ describe('local wipe (logout / leave / removal)', () => {
     server.removeMember(hh, bram.userId);
     let text = '';
     bram.engine.onMembershipLost(() => {
-      text = bram.engine.failedAsText();
+      text = bram.engine.unsent().text;
     });
     bram.goOnline();
     await bram.engine.whenIdle();

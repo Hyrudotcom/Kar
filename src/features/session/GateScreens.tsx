@@ -4,11 +4,11 @@ import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { copyText } from '@/src/lib/share';
-import { AppText, EmptyState, PrimaryButton, TextButton, useColors } from '@/src/ui';
+import { AppText, ConfirmSheet, EmptyState, PrimaryButton, TextButton, useColors } from '@/src/ui';
 import { sizes, spacing } from '@/src/ui/tokens';
 
 import { InviteCodeSheet } from '../auth/InviteCodeSheet';
-import { changesText } from './copy';
+import { changesText, unsentTitle } from './copy';
 import { useSession, type UnavailableReason } from './SessionProvider';
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -78,12 +78,26 @@ const UNAVAILABLE_COPY: Record<UnavailableReason, { title: string; body: string;
 /** No list to show: no internet on first start, a server error, or the local database (D-01). */
 export function UnavailableScreen() {
   const session = useSession();
+  const [pending, setPending] = useState(0);
   const reason = session.state.kind === 'unavailable' ? session.state.reason : 'network';
   const copy = UNAVAILABLE_COPY[reason];
+  // The file that could not be opened can still hold offline edits: ask before they are deleted (F18).
+  const signOut = async () => {
+    const r = await session.signOut(false);
+    if (!r.ok && r.error === 'pending' && r.pending) setPending(r.pending);
+  };
   return (
     <Frame>
       <EmptyState title={copy.title} body={copy.body} action={{ label: 'Opnieuw proberen', onPress: () => void session.retry() }} actionStyle="primary" testID={copy.testID} />
-      <TextButton label="Uitloggen" tone="muted" align="center" onPress={() => void session.signOut(true)} />
+      <TextButton label="Uitloggen" tone="muted" align="center" onPress={() => void signOut()} />
+      <ConfirmSheet
+        visible={pending > 0}
+        title={unsentTitle(pending)}
+        confirmLabel="Toch uitloggen"
+        danger
+        onConfirm={() => void session.signOut(true)}
+        onCancel={() => setPending(0)}
+      />
     </Frame>
   );
 }
@@ -99,7 +113,7 @@ export function SwitchAccountScreen() {
         Ander account
       </AppText>
       <AppText variant="body" color="textMuted">
-        {`Op deze telefoon staan nog ${changesText(n)} van een ander account die nog niet verstuurd zijn. Als je doorgaat, worden ze weggegooid.`}
+        {`Op deze telefoon staan nog ${changesText(n)} van een ander account die nog niet verstuurd ${n === 1 ? 'is' : 'zijn'}. Als je doorgaat, worden ze weggegooid.`}
       </AppText>
       <PrimaryButton label="Doorgaan en weggooien" onPress={() => void session.confirmSwitchAccount()} />
       <TextButton label="Terug naar inloggen" tone="muted" onPress={() => void session.cancelSwitchAccount()} />

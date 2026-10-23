@@ -13,6 +13,13 @@ test('sign in with an e-mail code, add an item, two Dutch tabs, no unverified pr
 
   await expect(page.getByText('Mijn lijst').first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('Goedkoopste route').first()).toBeVisible();
+  // D2-01: the tab labels are not cut off (they were squeezed to 10 px of their 18 px line).
+  for (const name of ['Mijn lijst', 'Goedkoopste route']) {
+    const box = await page.getByRole('tab', { name }).getByText(name).boundingBox();
+    expect(box && box.height).toBeGreaterThanOrEqual(15);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  }
+  await page.screenshot({ path: 'test-results/tabs.png' });
 
   const add = page.getByRole('textbox').first();
   await add.fill('2 pak hagelslag');

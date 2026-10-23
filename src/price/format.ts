@@ -6,7 +6,7 @@ import type { BaseUnit, BasketLine, ComparisonResult, StoreBasket } from '@/src/
 
 export const PRICE_COPY = {
   title: 'Goedkoopste route',
-  subtitle: 'Welke winkel is voor je hele lijst het goedkoopst',
+  subtitle: 'Welke winkel is voor je hele lijst het goedkoopst?',
   unavailableTitle: 'Geen geverifieerde prijzen beschikbaar',
   unavailableBody: 'We laten liever niets zien dan een verkeerde vergelijking.',
   empty: 'Nog niets te vergelijken',
@@ -14,13 +14,14 @@ export const PRICE_COPY = {
   incompleteHeader: 'Onvolledig',
   cheapest: 'Goedkoopste',
   onlyComplete: 'Enige complete mand',
+  tied: 'Even goedkoop',
   noPrice: 'Geen prijs',
   wrongProduct: 'Verkeerd product',
   useAnyway: 'Toch gebruiken',
   exclude: 'Niet vergelijken',
   optInBody: 'Ontbrekende prijzen tonen we eerlijk.',
   optInButton: 'Prijzen vergelijken',
-  webshopFootnote: 'Webshopprijzen, kunnen in de winkel afwijken.',
+  webshopFootnote: 'Dit zijn webshopprijzen. In de winkel kan het anders zijn.',
 } as const;
 
 /** 3842 -> "€38,42"; 5 -> "€0,05". Throws on a non-integer so a missing price can never render as €0,00. */
@@ -36,7 +37,7 @@ export function formatCents(cents: number): string {
 
 /** Delta to the cheapest basket: "+€2,68". null for the cheapest / incomplete ones. */
 export function formatDelta(delta: number | null): string | null {
-  return delta === null ? null : `+${formatCents(delta)}`;
+  return delta === null || delta <= 0 ? null : `+${formatCents(delta)}`;
 }
 
 /** Basket amount, or null when the basket is incomplete (no total is shown at all). */
@@ -63,6 +64,7 @@ export function formatAge(line: BasketLine): string | null {
 export function formatStoreLabel(b: StoreBasket): string | null {
   const parts: string[] = [];
   if (b.label === 'cheapest') parts.push(PRICE_COPY.cheapest);
+  if (b.label === 'tied') parts.push(PRICE_COPY.tied);
   if (b.label === 'only_complete') parts.push(PRICE_COPY.onlyComplete);
   if (b.complete && b.stale_count > 0) parts.push(`${b.stale_count} verouderd`);
   return parts.length ? parts.join(' · ') : null;
@@ -87,8 +89,23 @@ export function formatPackages(line: BasketLine): string | null {
 /** "600 g, 100 g meer" (only set when the engine reported > 25% overage). */
 export function formatOverage(line: BasketLine): string | null {
   if (!line.overage || line.package_count === null || line.package_content === null || line.package_unit === null) return null;
+  const extra = `${formatAmount(line.overage.amount, line.overage.unit)} meer`;
+  // One package: its size is already in the product name, so only the extra amount (D2-19).
+  if (line.package_count === 1) return extra;
   const totalBought = Math.round(line.package_count * line.package_content * 1000) / 1000;
-  return `${formatAmount(totalBought, line.package_unit)}, ${formatAmount(line.overage.amount, line.overage.unit)} meer`;
+  return `${formatAmount(totalBought, line.package_unit)}, ${extra}`;
+}
+
+const DAYS_NL = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
+const MONTHS_NL = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+
+/** "Actie t/m zo 26 okt" for a line priced with a promotion; "Actie" without a known end; else null. */
+export function formatPromotion(line: BasketLine): string | null {
+  if (!line.promotion_applied) return null;
+  const t = line.promotion_valid_until ? Date.parse(line.promotion_valid_until) : NaN;
+  if (!Number.isFinite(t)) return 'Actie';
+  const d = new Date(t);
+  return `Actie t/m ${DAYS_NL[d.getDay()]} ${d.getDate()} ${MONTHS_NL[d.getMonth()]}`;
 }
 
 /** Line amount: "€2,38" or "Geen prijs" — never "€0,00" for an unknown price. */

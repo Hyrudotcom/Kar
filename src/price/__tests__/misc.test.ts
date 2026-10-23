@@ -12,6 +12,7 @@ import {
   formatLineAmount,
   formatMissing,
   formatOverage,
+  formatPromotion,
   formatPackages,
   formatResultHeader,
   formatStoreLabel,
@@ -113,6 +114,7 @@ describe('format (Dutch)', () => {
     line_total_cents: 718,
     overage: null,
     age_days: 1,
+    observed_at: null,
     promotion_applied: false,
     promotion_valid_until: null,
     unit_price: null,
@@ -128,6 +130,7 @@ describe('format (Dutch)', () => {
     expect(() => formatCents(1.5)).toThrow();
     expect(formatDelta(268)).toBe('+€2,68');
     expect(formatDelta(null)).toBeNull();
+    expect(formatDelta(0)).toBeNull(); // a tie never reads "+€0,00"
   });
 
   test('incomplete baskets never get an amount', () => {
@@ -141,6 +144,7 @@ describe('format (Dutch)', () => {
   test('store labels', () => {
     expect(formatStoreLabel(basket({ stale_count: 1 }))).toBe('Goedkoopste · 1 verouderd');
     expect(formatStoreLabel(basket({ label: 'only_complete' }))).toBe('Enige complete mand');
+    expect(formatStoreLabel(basket({ label: 'tied' }))).toBe('Even goedkoop');
     expect(formatStoreLabel(basket({ label: null }))).toBeNull();
     expect(formatStoreLabel(basket({ label: null, complete: false, stale_count: 2 }))).toBeNull();
   });
@@ -153,6 +157,14 @@ describe('format (Dutch)', () => {
     expect(formatPackages(ln({ package_count: null }))).toBeNull();
     expect(formatOverage(ln({ overage: { amount: 100, unit: 'g' } }))).toBe('600 g, 100 g meer');
     expect(formatOverage(ln({}))).toBeNull();
+    // One package: no repeated package size (D2-19).
+    expect(formatOverage(ln({ package_count: 1, package_content: 400, overage: { amount: 100, unit: 'g' } }))).toBe('100 g meer');
+  });
+
+  test('applied promotions are named with their end date', () => {
+    expect(formatPromotion(ln({}))).toBeNull();
+    expect(formatPromotion(ln({ promotion_applied: true, promotion_valid_until: new Date(2026, 9, 26, 12).toISOString() }))).toBe('Actie t/m ma 26 okt');
+    expect(formatPromotion(ln({ promotion_applied: true, promotion_valid_until: null }))).toBe('Actie');
     expect(formatAge(ln({ status: 'stale', age_days: 4 }))).toBe('4 d oud');
     expect(formatAge(ln({ status: 'verified', age_days: 4 }))).toBeNull();
     expect(formatAmount(1500, 'g')).toBe('1,5 kg');
@@ -315,5 +327,29 @@ describe('repository', () => {
     // A server that caps pages below our page size must not yield a silently short dataset.
     await expect(loadPriceDataset(client(tables, {}, { maxRows: 500 }).c)).resolves.toBeTruthy();
     await expect(loadPriceDataset(client(tables, {}, { noCount: true }).c)).rejects.toBeInstanceOf(PriceDataError);
+  });
+
+  /** Round 2: a row inserted into an already-read page between page requests shifts the offsets. */
+  test('a row inserted during a paged read fails loudly instead of repeating one row and dropping another', async () => {
+    const obs = (i: number) => ({
+      id: `o${i}`, product_id: `p${String(i).padStart(5, '0')}`, chain_id: 'ah', source_id: LICENSED.id, price_cents: 100, unit_price_cents: null, unit_price_unit: null,
+      promotion: null, promotion_valid_until: null, requires_loyalty: false, observed_at: daysAgo(1), ingested_at: daysAgo(1),
+    });
+    const observations = Array.from({ length: 1500 }, (_, i) => obs(i * 2 + 2));
+    const tables = { price_sources: [LICENSED], chains: [{ id: 'ah', name: 'Albert Heijn' }], price_observations_latest: observations };
+    const { c } = client(tables);
+    const from = c.from.bind(c);
+    let pages = 0;
+    c.from = (table) => {
+      const sel = from(table);
+      if (table !== 'price_observations_latest') return sel;
+      return {
+        select(cols, options) {
+          if (pages++ === 1) observations.push(obs(1)); // sorts first: page 2 now starts one row early
+          return sel.select(cols, options);
+        },
+      };
+    };
+    await expect(loadPriceDataset(c)).rejects.toThrow(/changed during the read/);
   });
 });

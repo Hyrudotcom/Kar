@@ -15,6 +15,11 @@ export interface LocalMeta {
   targetId?: Uuid;
   /** add_item that restored a checked row: its quantity before the restore. */
   prevQuantity?: number;
+  /**
+   * Undo of an add that was sent but not answered: the add is hidden locally, and once the server's
+   * real answer arrives (applied / merged / restored) its exact inverse is queued (applyResults).
+   */
+  revertOnAck?: boolean;
 }
 
 /** One outbox row, in memory (mirrors the `outbox` table). */

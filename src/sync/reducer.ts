@@ -128,6 +128,9 @@ export function reduce(input: ReduceInput): ReduceOutput {
     const markPending = (id: Uuid | null) => {
       if (pending && id) pendingIds.add(id);
     };
+    // An acked row whose pulled base row is already at or past its seq is contained in that row:
+    // replaying it again would count an increment twice or put an older name over a newer one.
+    const covered = (id: Uuid) => ackSeq !== null && (input.base.get(id)?.server_seq ?? -1) >= ackSeq;
 
     if (m.kind === 'add_item') {
       const p = m.payload;
@@ -136,6 +139,11 @@ export function reduce(input: ReduceInput): ReduceOutput {
         const res = entry.result;
         const target = res.item_id ?? p.id;
         if (target !== p.id) aliases.set(p.id, target);
+        if (covered(target)) {
+          const outcome = res.status === 'merged' ? 'merged' : res.status === 'restored' ? 'restored' : 'added';
+          sims.set(m.id, { outcome, targetId: target, prevQuantity: entry.localMeta?.prevQuantity });
+          continue;
+        }
         const pos = res.server_seq ?? ackSeq ?? maxPos + 1;
         const existing = writable(target);
         if (res.status === 'merged') {
@@ -161,6 +169,11 @@ export function reduce(input: ReduceInput): ReduceOutput {
           if (!existing) put(newRow(m, target, pos, pos));
           sims.set(m.id, { outcome: 'added', targetId: target });
         }
+        continue;
+      }
+      // Undone while unanswered: hidden until the server's answer turns it into its exact inverse.
+      if (entry.localMeta?.revertOnAck) {
+        sims.set(m.id, { outcome: 'noop', targetId: null });
         continue;
       }
       // Pending: simulate the server's dedupe.
@@ -224,6 +237,10 @@ export function reduce(input: ReduceInput): ReduceOutput {
     const r = rows.get(id);
     if (!r) {
       sims.set(m.id, { outcome: 'noop', targetId: null, wouldReject: 'not_found' });
+      continue;
+    }
+    if (!pending && covered(id)) {
+      sims.set(m.id, { outcome: 'updated', targetId: id });
       continue;
     }
     switch (m.kind) {

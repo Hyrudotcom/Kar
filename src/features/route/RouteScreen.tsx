@@ -21,13 +21,14 @@ import {
   formatLineAmount,
   formatOverage,
   formatPackages,
+  formatPromotion,
   formatResultHeader,
   formatStoreLabel,
   isEligibleSource,
   listFingerprint,
   PRICE_COPY,
+  statusForAge,
 } from '@/src/price';
-import { PRICE_AGE_RULES } from '@/src/contracts';
 import { useList, useSyncEngine } from '@/src/sync/hooks';
 import {
   AppText,
@@ -77,6 +78,7 @@ export function storeAccessibilityLabel(b: StoreBasket, showLabel: boolean): str
   const parts = [b.chain_name, coverage];
   if (b.stale_count > 0) parts.push(`${b.stale_count} verouderd`);
   if (showLabel && b.label === 'cheapest') parts.push('goedkoopste');
+  if (showLabel && b.label === 'tied') parts.push('even goedkoop');
   if (showLabel && b.label === 'only_complete') parts.push('enige complete mand');
   parts.push(speakCents(b.total_cents));
   return `${parts.join(', ')}.`;
@@ -108,9 +110,11 @@ function Title({ onInfo }: { onInfo?: () => void }) {
 }
 
 /**
- * A cached comparison (offline, rule 9) is shown only while it is still true: at most 12 h old, no
- * price that has meanwhile passed 14 days (it would be unknown now), and no applied promotion that
- * has ended. Otherwise the error state is shown instead of old totals and an old "Goedkoopste".
+ * A cached comparison (offline, rule 9) is shown only while it is still true: at most 12 h old, every
+ * priced line still has the status it was cached with (a price that has meanwhile passed 7 days would
+ * be "verouderd", past 14 days unknown), and no applied promotion has ended. Ages use the exact
+ * observation time; a cache without it uses the upper bound of its floored age_days. Otherwise the
+ * error state is shown instead of old totals and an old "Goedkoopste".
  */
 export const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 export function isCachedComparisonUsable(result: ComparisonResult, computedAt: number, now: number): boolean {
@@ -118,8 +122,10 @@ export function isCachedComparisonUsable(result: ComparisonResult, computedAt: n
   if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > CACHE_MAX_AGE_MS) return false;
   for (const store of result.stores) {
     for (const line of store.lines) {
-      if (line.status === 'unknown' || line.age_days === null) continue;
-      if (line.age_days * DAY_MS + elapsed > PRICE_AGE_RULES.staleMaxDays * DAY_MS) return false;
+      if (line.status === 'unknown') continue;
+      const observed = line.observed_at ? Date.parse(line.observed_at) : NaN;
+      const ageNow = Number.isFinite(observed) ? now - observed : line.age_days === null ? Infinity : (line.age_days + 1) * DAY_MS + elapsed;
+      if (statusForAge(ageNow) !== line.status) return false;
       if (line.promotion_applied && line.promotion_valid_until && Date.parse(line.promotion_valid_until) < now) return false;
     }
   }
@@ -346,7 +352,7 @@ function ResultView({
           </View>
         ) : null}
         <AppText variant="footnote" color="textMuted" style={styles.footer}>
-          {webshop ? PRICE_COPY.webshopFootnote : 'Landelijke prijzen, kunnen in de winkel afwijken.'}
+          {webshop ? PRICE_COPY.webshopFootnote : 'Dit zijn landelijke prijzen. In de winkel kan het anders zijn.'}
         </AppText>
       </ScrollView>
       <StoreSheet basket={store} onClose={() => setStoreId(null)} />
@@ -456,9 +462,10 @@ function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) 
   const unknown = line.status === 'unknown' || line.line_total_cents === null;
   const age = formatAge(line);
   const overage = formatOverage(line);
+  const promotion = unknown ? null : formatPromotion(line);
   const packages = formatPackages(line);
   const title = line.product_name ?? line.item_name;
-  const spoken = [title, packages ? `${line.package_count} keer` : null, unknown ? 'geen prijs' : formatCents(line.line_total_cents!), age, overage].filter(Boolean).join(', ');
+  const spoken = [title, packages ? `${line.package_count} keer` : null, unknown ? 'geen prijs' : formatCents(line.line_total_cents!), promotion, age, overage].filter(Boolean).join(', ');
   return (
     <Pressable onPress={onPress} disabled={!onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={spoken} style={styles.line}>
       <View style={styles.lineRow}>
@@ -483,8 +490,13 @@ function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) 
           </AppText>
         )}
       </View>
-      {age || overage ? (
+      {age || overage || promotion ? (
         <View style={styles.inline}>
+          {promotion ? (
+            <AppText variant="footnote" color="textMuted" testID="line-promotion">
+              {promotion}
+            </AppText>
+          ) : null}
           {age ? (
             <>
               <ClockIcon size={14} color="warning" />

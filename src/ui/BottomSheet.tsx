@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText } from './Text';
-import { useColors } from './theme';
+import { useColors, useScheme } from './theme';
 import { motion, radius, sizes, spacing } from './tokens';
 import { useReducedMotion } from './useReducedMotion';
 
@@ -34,6 +34,7 @@ const CLOSE_DISTANCE = 80;
 /** Bottom sheet on `surfaceRaised` with a top radius of 20 (design-spec 3). */
 export function BottomSheet({ visible, onClose, title, children, testID, accessibilityLabel }: BottomSheetProps) {
   const c = useColors();
+  const scheme = useScheme();
   const insets = useSafeAreaInsets();
   const reduced = useReducedMotion();
   const [translate] = useState(() => new Animated.Value(0));
@@ -68,7 +69,7 @@ export function BottomSheet({ visible, onClose, title, children, testID, accessi
     <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable
-          style={[StyleSheet.absoluteFill, styles.backdrop]}
+          style={[StyleSheet.absoluteFill, scheme === 'dark' ? styles.backdropDark : styles.backdrop]}
           onPress={onClose}
           accessibilityRole="button"
           accessibilityLabel="Sluiten"
@@ -104,6 +105,8 @@ export function BottomSheet({ visible, onClose, title, children, testID, accessi
 const styles = StyleSheet.create({
   fill: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.32)' },
+  /** Dark mode: a 32% scrim barely dims a near-black list, so sheets blended in (D2-14). */
+  backdropDark: { backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,

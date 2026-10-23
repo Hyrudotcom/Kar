@@ -16,13 +16,13 @@ import { sizes, spacing } from '@/src/ui/tokens';
 import { useSnackbar } from '../feedback/SnackbarProvider';
 import { usePrices } from '../route/PriceContext';
 import { useBackend } from '../session/BackendContext';
-import { changesText, householdErrorText, OFFLINE_SHARE } from '../session/copy';
+import { householdErrorText, OFFLINE_SHARE, unsentTitle } from '../session/copy';
 import { useReadySession, type ActionResult } from '../session/SessionProvider';
 
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toLocaleUpperCase('nl-NL');
+  if (parts.length === 1) return parts[0]![0]!.toLocaleUpperCase('nl-NL'); // "J", not "JA" (D2-21)
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toLocaleUpperCase('nl-NL');
 }
 
@@ -60,10 +60,13 @@ export function HouseholdScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const members = household.members.length
+  // The server's member list always includes me: an empty list means "not known yet" (started from
+  // the cache, or the refresh failed). Never treat that as "alone" (that text says everything is deleted).
+  const membersKnown = household.members.length > 0;
+  const members = membersKnown
     ? household.members
     : [{ household_id: household.id, user_id: user.id, role: household.role, joined_at: '', display_name: user.displayName }];
-  const alone = members.length <= 1;
+  const alone = membersKnown && members.length <= 1;
 
   const share = async (replace: boolean) => {
     setSharing(true);
@@ -178,15 +181,19 @@ export function HouseholdScreen() {
           ? { title: `${hh} verlaten?`, body: `${hh} en de lijst worden definitief verwijderd.`, confirmLabel: 'Verwijderen' }
           : { title: `${hh} verlaten?`, body: 'Je ziet deze lijst daarna niet meer.', confirmLabel: 'Verlaten' };
       case 'leavePending':
-        return { title: `Je hebt ${changesText(confirm.pending)} die nog niet verstuurd zijn.`, confirmLabel: 'Toch verlaten' };
+        return { title: unsentTitle(confirm.pending), confirmLabel: 'Toch verlaten' };
       case 'signOutPending':
-        return { title: `Je hebt ${changesText(confirm.pending)} die nog niet verstuurd zijn.`, confirmLabel: 'Toch uitloggen' };
+        return { title: unsentTitle(confirm.pending), confirmLabel: 'Toch uitloggen' };
       case 'replaceCode':
         return { title: 'Code vervangen?', body: 'Links en codes die je al hebt gedeeld werken dan niet meer.', confirmLabel: 'Code vervangen' };
       case 'deleteAccount':
         return {
           title: 'Account verwijderen?',
-          body: alone ? `${hh} en de lijst worden definitief verwijderd.` : `Je account wordt verwijderd. ${hh} blijft bestaan voor de andere leden.`,
+          body: alone
+            ? `${hh} en de lijst worden definitief verwijderd.`
+            : membersKnown
+              ? `Je account wordt verwijderd. ${hh} blijft bestaan voor de andere leden.`
+              : 'Je account wordt verwijderd.',
           confirmLabel: 'Account verwijderen',
         };
     }
@@ -265,6 +272,11 @@ export function HouseholdScreen() {
               }}
             />
           ))}
+          {!membersKnown ? (
+            <AppText variant="footnote" color="textMuted" testID="members-unknown">
+              {online ? 'Leden worden geladen' : 'Leden zie je weer als je online bent'}
+            </AppText>
+          ) : null}
         </View>
 
         {prices.available ? (
@@ -278,6 +290,8 @@ export function HouseholdScreen() {
               accessibilityLabel="Prijsvergelijking tonen"
               trackColor={{ true: c.accent, false: c.border }}
               thumbColor={c.surfaceRaised}
+              // react-native-web draws its own teal thumb unless told otherwise (D2-07).
+              {...({ activeThumbColor: c.surfaceRaised } as object)}
             />
           </View>
         ) : null}
@@ -296,19 +310,20 @@ export function HouseholdScreen() {
               setConfirm({ kind: 'leave' });
             }}
           />
-          {!online ? (
-            <AppText variant="footnote" color="textMuted">
-              Verlaten kan alleen online
-            </AppText>
-          ) : null}
           <TextButton
             label="Account verwijderen"
-            tone="muted"
+            tone="danger"
+            disabled={!online}
             onPress={() => {
               setConfirmError(null);
               setConfirm({ kind: 'deleteAccount' });
             }}
           />
+          {!online ? (
+            <AppText variant="footnote" color="textMuted">
+              Verlaten en account verwijderen kan alleen online
+            </AppText>
+          ) : null}
         </View>
       </ScrollView>
       <ConfirmSheet

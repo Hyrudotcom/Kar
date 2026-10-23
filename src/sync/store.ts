@@ -189,6 +189,10 @@ export class LocalStore {
     }
   }
 
+  updateLocalMeta(id: Uuid, meta: LocalMeta | null): Promise<unknown> {
+    return this.db.run('update outbox set local_meta = ? where id = ?', [meta ? JSON.stringify(meta) : null, id]);
+  }
+
   updatePayload(id: Uuid, payload: Mutation['payload']): Promise<unknown> {
     return this.db.run('update outbox set payload = ? where id = ?', [JSON.stringify(payload), id]);
   }

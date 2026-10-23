@@ -524,7 +524,7 @@ describe('errors and retries', () => {
     expect(server.list(hh)).toHaveLength(1);
   });
 
-  test('not_member: stops, moves the pending outbox to failed (not_member), fires onMembershipLost once', async () => {
+  test('not_member: stops, keeps the pending outbox (unsent() lists it), fires onMembershipLost once', async () => {
     const { anna, bram, server, hh } = await twoDevices();
     const lost = jest.fn();
     bram.engine.onMembershipLost(lost);
@@ -539,14 +539,13 @@ describe('errors and retries', () => {
     await bram.engine.whenIdle();
     await bram.engine.syncNow();
     expect(lost).toHaveBeenCalledTimes(1);
-    const st = bram.engine.getStatus();
-    expect(st.pendingCount).toBe(0);
-    expect(st.failed.map((f) => [f.itemName, f.reason])).toEqual([
-      ['Brood', 'not_member'],
-      ['Kaas', 'not_member'],
-      ['Al verstuurd', 'not_member'],
-    ]);
-    expect(bram.engine.failedAsText()).toContain('3 wijzigingen konden niet worden opgeslagen');
+    // Kept, not moved to failed: the session decides between removal (wipe, with this list) and a
+    // household switch on another device (re-addressed by the next engine on this file).
+    expect((await outboxRows(bram)).map((r) => r.kind)).toEqual(['add_item', 'add_item', 'set_checked']);
+    const u = bram.engine.unsent();
+    expect(u.count).toBe(3);
+    expect(u.text).toContain('3 wijzigingen konden niet worden opgeslagen');
+    for (const n of ['Brood', 'Kaas', 'Al verstuurd']) expect(u.text).toContain(n);
     const before = bram.transport.calls.length;
     await bram.engine.syncNow();
     await bram.engine.addItem({ name: 'Na verwijdering', quantity: 1, unit: 'stuk' });

@@ -4,6 +4,7 @@ import type { ComparisonResult, PriceDataset } from '@/src/contracts';
 import { DatasetBuilder } from '@/src/price/__tests__/fixtures';
 
 import { flush, makeBackend, renderReady, signIn } from '../../__tests__/helpers';
+import { PRICE_LOAD_TIMEOUT_MS } from '../PriceContext';
 import { isCachedComparisonUsable, RouteScreen, speakCents, storeAccessibilityLabel } from '../RouteScreen';
 
 jest.mock('react-native-safe-area-context', () => require('../../__tests__/mocks').safeAreaMock());
@@ -44,7 +45,7 @@ describe('Goedkoopste route', () => {
   it('v1: shows "Geen geverifieerde prijzen beschikbaar" with no button and no toggle', async () => {
     await setup({}, [{ name: 'Melk' }]);
     expect(await screen.findByText('Geen geverifieerde prijzen beschikbaar')).toBeTruthy();
-    expect(screen.getByText('Welke winkel is voor je hele lijst het goedkoopst')).toBeTruthy();
+    expect(screen.getByText('Welke winkel is voor je hele lijst het goedkoopst?')).toBeTruthy();
     expect(screen.getByText(/We laten liever niets zien dan een verkeerde vergelijking\./)).toBeTruthy();
     expect(screen.queryAllByRole('button')).toHaveLength(0);
     expect(screen.queryByText(/€/)).toBeNull();
@@ -80,14 +81,88 @@ describe('Goedkoopste route', () => {
     expect(await screen.findByLabelText('Prijzen vergelijken')).toBeTruthy();
   });
 
-  it('cached comparisons are only reused while still true (age, 14-day rule, promotions)', () => {
+  it('cached comparisons are only reused while still true (age, 7/14-day rules, promotions)', () => {
     const now = Date.now();
-    const result = { stores: [{ lines: [{ status: 'stale', age_days: 13, promotion_applied: false, promotion_valid_until: null }] }] } as unknown as ComparisonResult;
-    expect(isCachedComparisonUsable(result, now - 60_000, now)).toBe(true);
-    expect(isCachedComparisonUsable(result, now - 13 * 3_600_000, now)).toBe(false); // older than 12 h
-    expect(isCachedComparisonUsable(result, now - 2 * DAY + 1, now - DAY + 1)).toBe(false); // 13 d + elapsed > 14 d
-    const promo = { stores: [{ lines: [{ status: 'verified', age_days: 1, promotion_applied: true, promotion_valid_until: new Date(now - 1000).toISOString() }] }] } as unknown as ComparisonResult;
-    expect(isCachedComparisonUsable(promo, now - 60_000, now)).toBe(false);
+    const H = 3_600_000;
+    const line = (status: string, observedDaysAgo: number, extra: object = {}) => ({
+      status,
+      age_days: Math.floor(observedDaysAgo),
+      observed_at: new Date(now - observedDaysAgo * DAY).toISOString(),
+      promotion_applied: false,
+      promotion_valid_until: null,
+      ...extra,
+    });
+    const res = (...lines: object[]) => ({ stores: [{ lines }] }) as unknown as ComparisonResult;
+    // Ages are judged at "now" from the exact observation time, not from the cached whole days.
+    expect(isCachedComparisonUsable(res(line('stale', 13)), now - 60_000, now)).toBe(true);
+    expect(isCachedComparisonUsable(res(line('stale', 13)), now - 13 * H, now)).toBe(false); // older than 12 h
+    // Regression: cached 11 h ago at 13.9 - 11/24 d (floored to 13): now 13.9 d, still stale -> usable;
+    // at 14.05 d it is unknown now -> the cached total and "Goedkoopste" may not be shown.
+    expect(isCachedComparisonUsable(res(line('stale', 13.9)), now - 11 * H, now)).toBe(true);
+    expect(isCachedComparisonUsable(res(line('stale', 14.05)), now - 11 * H, now)).toBe(false);
+    // A line cached as verified that has meanwhile passed 7 days would now be "verouderd".
+    expect(isCachedComparisonUsable(res(line('verified', 7.2)), now - 11 * H, now)).toBe(false);
+    expect(isCachedComparisonUsable(res(line('verified', 6.5)), now - 11 * H, now)).toBe(true);
+    // A cache without observed_at (older app version) uses the upper bound of its floored age.
+    const legacy = { stores: [{ lines: [{ status: 'stale', age_days: 13, promotion_applied: false, promotion_valid_until: null }] }] } as unknown as ComparisonResult;
+    expect(isCachedComparisonUsable(legacy, now - 60_000, now)).toBe(false);
+    expect(isCachedComparisonUsable(res(line('verified', 1, { promotion_applied: true, promotion_valid_until: new Date(now - 1000).toISOString() })), now - 60_000, now)).toBe(false);
+  });
+
+  it('a stalled price request (never answers) never leaves skeleton rows: "Geen geverifieerde prijzen" shows at once', async () => {
+    const backend = makeBackend({ priceDataset: fixture() });
+    const me = await signIn(backend);
+    const r = await backend.households.createHousehold();
+    if (!r.ok) throw new Error('hh');
+    backend.world.addItemsAs(me.id, r.household.id, [{ name: 'Melk' }]);
+    const getOptIn = jest.fn(() => new Promise<boolean>(() => undefined));
+    backend.prices.loadDataset = () => new Promise<PriceDataset>(() => undefined);
+    backend.prices.getOptIn = getOptIn;
+    await renderReady(<RouteScreen />, backend);
+    await flush();
+    expect(screen.getByTestId('route-unavailable')).toBeTruthy();
+    expect(getOptIn).not.toHaveBeenCalled(); // opt-in is only fetched once a comparison is possible
+  });
+
+  it('when this device saw verified prices before, a stalled load ends after the timeout instead of loading forever', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const backend = makeBackend({ priceDataset: fixture() });
+      const me = await signIn(backend);
+      const r = await backend.households.createHousehold();
+      if (!r.ok) throw new Error('hh');
+      await backend.kv.setItem(`price_available_${r.household.id}`, '1');
+      backend.world.addItemsAs(me.id, r.household.id, [{ name: 'Melk' }]);
+      backend.prices.loadDataset = () => new Promise<PriceDataset>(() => undefined);
+      await renderReady(<RouteScreen />, backend);
+      await flush();
+      expect(screen.queryByTestId('route-unavailable')).toBeNull(); // skeleton while it may still come
+      await act(async () => {
+        jest.advanceTimersByTime(PRICE_LOAD_TIMEOUT_MS + 10);
+      });
+      await flush();
+      expect(screen.getByTestId('route-unavailable')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('equal totals: both stores read "Even goedkoop", no single "Goedkoopste", no +€0,00', async () => {
+    const b = new DatasetBuilder();
+    b.data.chains = [
+      { id: 'ah', name: 'Albert Heijn' },
+      { id: 'jumbo', name: 'Jumbo' },
+    ];
+    b.catalog('melk', ['melk'], 1000, 'ml');
+    b.simple('melk', 'ah', 119, 1000, 'ml', ago(1));
+    b.simple('melk', 'jumbo', 119, 1000, 'ml', ago(1));
+    await setup({ priceDataset: b.data }, [{ name: 'Melk' }]);
+    await act(async () => fireEvent.press(await screen.findByLabelText('Prijzen vergelijken')));
+    await flush();
+    expect(within(screen.getByTestId('store-ah')).getByText('Even goedkoop')).toBeTruthy();
+    expect(within(screen.getByTestId('store-jumbo')).getByText('Even goedkoop')).toBeTruthy();
+    expect(screen.queryByText('Goedkoopste')).toBeNull();
+    expect(screen.queryByText('+€0,00')).toBeNull();
   });
 
   it('with verified data: opt-in first, then only complete baskets are ranked and totalled', async () => {
@@ -112,7 +187,7 @@ describe('Goedkoopste route', () => {
     expect(within(lidl).queryByText(/€/)).toBeNull();
     expect(lidl.props.accessibilityLabel).toBe('Lidl, onvolledig, 1 van 2 prijzen.');
     expect(jumbo.props.accessibilityLabel).toBe('Jumbo, 2 van 2 prijzen, 1 verouderd, goedkoopste, 4 euro 59.');
-    expect(screen.getByText('Webshopprijzen, kunnen in de winkel afwijken.')).toBeTruthy();
+    expect(screen.getByText('Dit zijn webshopprijzen. In de winkel kan het anders zijn.')).toBeTruthy();
 
     // Lines of the incomplete store: the unknown price is "Geen prijs", never €0,00.
     await act(async () => fireEvent.press(lidl));

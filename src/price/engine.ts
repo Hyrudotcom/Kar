@@ -93,6 +93,7 @@ function unknownLine(item: BasketRequestItem, catalogId: string | null): BasketL
     line_total_cents: null,
     overage: null,
     age_days: null,
+    observed_at: null,
     promotion_applied: false,
     promotion_valid_until: null,
     unit_price: null,
@@ -263,6 +264,7 @@ export const compareBaskets: CompareBaskets = (input) => {
         line_total_cents: Number(best.cost),
         overage: showOverage ? { amount: microToNumber(best.overage), unit: best.product.net_content_unit } : null,
         age_days: days,
+        observed_at: best.pick.obs.observed_at,
         promotion_applied: best.promotion_applied,
         promotion_valid_until: best.promotion_applied ? best.pick.obs.promotion_valid_until : null,
         unit_price: unitPrice(best.pick.obs.price_cents, best.product.net_content, best.product.net_content_unit),
@@ -299,8 +301,11 @@ export const compareBaskets: CompareBaskets = (input) => {
 
   const cheapest = completeBaskets[0];
   if (cheapest) {
-    cheapest.label = completeBaskets.length === 1 ? 'only_complete' : 'cheapest';
-    for (const b of completeBaskets.slice(1)) b.delta_cents = b.total_cents! - cheapest.total_cents!;
+    const tied = completeBaskets.filter((b) => b.total_cents === cheapest.total_cents);
+    if (completeBaskets.length === 1) cheapest.label = 'only_complete';
+    else if (tied.length > 1) for (const b of tied) b.label = 'tied';
+    else cheapest.label = 'cheapest';
+    for (const b of completeBaskets) if (b.total_cents !== cheapest.total_cents) b.delta_cents = b.total_cents! - cheapest.total_cents!;
   }
 
   return {

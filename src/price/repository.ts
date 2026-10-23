@@ -60,6 +60,7 @@ const strOrNull = (v: unknown): string | null => (v === null || v === undefined 
 /** Reads all rows in pages ordered by `orderBy` (a unique key); fails loudly on a short read. */
 async function read(client: PriceReadClient, table: string, columns: string, orderBy: readonly string[]): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
+  const keys = new Set<string>();
   let total: number | null = null;
   for (let page = 0; page < 10_000; page++) {
     let q = client.from(table).select(columns, page === 0 ? { count: 'exact' } : undefined);
@@ -71,6 +72,13 @@ async function read(client: PriceReadClient, table: string, columns: string, ord
       total = count;
     }
     const got = (data ?? []) as Record<string, unknown>[];
+    // Offset paging over live data: a row inserted into an earlier page shifts the next page, which
+    // then repeats a row and silently skips the last one. A repeated key means "changed while read".
+    for (const r of got) {
+      const key = orderBy.map((col) => str(r[col])).join('\u0000');
+      if (keys.has(key)) throw new PriceDataError(table, 'rows changed during the read (duplicate key across pages)');
+      keys.add(key);
+    }
     rows.push(...got);
     if (got.length === 0 || rows.length >= total!) break;
   }

@@ -283,9 +283,7 @@ describe('(d) household separation', () => {
     bramDevice.online();
     // Reconnecting pushes the outbox, which answers not_member.
     await waitFor(() => lost === 1, 10_000, 'membership lost');
-    const status = bramDevice.engine.getStatus();
-    expect(status.failed.map((f) => [f.itemName, f.reason])).toEqual([['Cadeau voor Anna', 'not_member']]);
-    expect(bramDevice.engine.failedAsText()).toContain('Cadeau voor Anna');
+    expect(bramDevice.engine.unsent()).toMatchObject({ count: 1, text: expect.stringContaining('Cadeau voor Anna') });
     expect(await serverRows(w.hhA)).not.toEqual(expect.arrayContaining([expect.stringContaining('Cadeau')]));
 
     // The app's removal flow wipes the per-user database.

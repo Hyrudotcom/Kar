@@ -312,7 +312,7 @@ export function CodeStep({
               }}
             />
           )}
-          <TextButton label="Ander e-mailadres" tone="muted" disabled={busy} onPress={onBack} />
+          <TextButton label="Ander e-mailadres" disabled={busy} onPress={onBack} />
         </View>
       </ScrollView>
     </SafeAreaView>

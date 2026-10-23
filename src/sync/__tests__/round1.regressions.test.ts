@@ -39,6 +39,63 @@ describe('undo of an add whose response was lost', () => {
     expect(dev.engine.getStatus()).toMatchObject({ pendingCount: 0, failed: [] });
   });
 
+  test('round 2: the server merged the add into another member\'s item -> undo only takes my quantity back', async () => {
+    const { server, hh, anna, bram } = await twoDevices();
+    await bram.engine.addItem({ name: 'Melk', quantity: 2, unit: 'stuk' });
+    await bram.engine.syncNow();
+    // Anna has not pulled Bram's Melk: locally her add is a new item, the server merges it.
+    anna.transport.loseNextResponses(1);
+    const r = await anna.engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await anna.engine.syncNow();
+    expect(openOnServer(server, hh)).toEqual(['Melk:3']);
+    await anna.engine.undo(r.undo);
+    await anna.engine.syncNow();
+    await anna.engine.syncNow();
+    expect(openOnServer(server, hh)).toEqual(['Melk:2']); // Bram's Melk survives
+    expect(anna.names()).toEqual(['Melk:2']);
+    await bram.engine.syncNow();
+    expect(bram.names()).toEqual(['Melk:2']);
+    expect(anna.engine.getStatus()).toMatchObject({ pendingCount: 0, failed: [] });
+  });
+
+  test('round 2: locally merged, but the server applied it as new (target deleted remotely) -> undo deletes the new item', async () => {
+    const { server, hh, anna, bram } = await twoDevices();
+    const melk = await anna.engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await anna.engine.syncNow();
+    await bram.engine.syncNow();
+    await bram.engine.deleteItem(melk.itemId);
+    await bram.engine.syncNow();
+    anna.transport.loseNextResponses(1);
+    const r = await anna.engine.addItem({ name: 'Melk', quantity: 2, unit: 'stuk' });
+    expect(r.outcome).toBe('merged'); // the local guess
+    await anna.engine.syncNow();
+    expect(openOnServer(server, hh)).toEqual(['Melk:2']);
+    await anna.engine.undo(r.undo);
+    await anna.engine.syncNow();
+    await anna.engine.syncNow();
+    expect(openOnServer(server, hh)).toEqual([]);
+    expect(anna.names()).toEqual([]);
+    expect(anna.engine.getStatus()).toMatchObject({ pendingCount: 0, failed: [] });
+  });
+
+  test('round 2: undo while still offline survives a restart and resolves once the answer arrives', async () => {
+    const { server, hh, anna, bram } = await twoDevices();
+    await bram.engine.addItem({ name: 'Melk', quantity: 2, unit: 'stuk' });
+    await bram.engine.syncNow();
+    anna.transport.loseNextResponses(1);
+    const r = await anna.engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await anna.engine.syncNow();
+    anna.goOffline();
+    await anna.engine.undo(r.undo);
+    expect(anna.names()).toEqual([]); // hidden at once (Bram's Melk was never pulled here)
+    await anna.restart();
+    anna.goOnline();
+    await anna.engine.syncNow();
+    await anna.engine.syncNow();
+    expect(openOnServer(server, hh)).toEqual(['Melk:2']);
+    expect(anna.names()).toEqual(['Melk:2']);
+  });
+
   test('an add that was never sent is still just dropped locally', async () => {
     const { dev } = await soloDevice();
     dev.goOffline();
@@ -136,6 +193,55 @@ describe('paged pull keeps acked edits until the last page', () => {
     anna.transport.pullChanges = pull;
     await anna.engine.syncNow();
     expect(anna.engine.getSnapshot().open.find((i) => i.id === melk.itemId)).toMatchObject({ note: 'halfvol', quantity: 2 });
+  });
+});
+
+describe('round 2: acked edits are not replayed onto a pulled row that already contains them', () => {
+  async function cutPull(anna: Awaited<ReturnType<typeof twoDevices>>['anna'], between: () => Promise<void>) {
+    const pull = anna.transport.pullChanges.bind(anna.transport);
+    let calls = 0;
+    anna.transport.pullChanges = async (...args) => {
+      calls++;
+      if (calls === 1) await between();
+      if (calls === 2) throw new TransientSyncError('page 2 lost');
+      return pull(...args);
+    };
+    await anna.engine.syncNow();
+    expect(calls).toBe(2);
+    return pull;
+  }
+
+  test('increment: page 1 already has my +1 -> 2, not 3 (also after a restart)', async () => {
+    const { server, hh, anna, bram } = await twoDevices({ pullPageSize: 2 });
+    const melk = await anna.engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await anna.engine.syncNow();
+    await bram.engine.syncNow();
+    await anna.engine.incrementQuantity(melk.itemId, 1);
+    await cutPull(anna, async () => {
+      await bram.engine.updateItem(melk.itemId, { note: 'halfvol' });
+      await bram.engine.addItem({ name: 'Brood', quantity: 1, unit: 'stuk' });
+      await bram.engine.addItem({ name: 'Kaas', quantity: 1, unit: 'stuk' });
+      await bram.engine.syncNow();
+    });
+    expect(server.list(hh).find((i) => i.name === 'Melk')!.quantity).toBe(2);
+    expect(anna.engine.getSnapshot().open.find((i) => i.id === melk.itemId)!.quantity).toBe(2);
+    await anna.restart();
+    expect(anna.engine.getSnapshot().open.find((i) => i.id === melk.itemId)!.quantity).toBe(2);
+  });
+
+  test('rename: a newer rename by someone else wins over my acked older rename', async () => {
+    const { anna, bram } = await twoDevices({ pullPageSize: 2 });
+    const melk = await anna.engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await anna.engine.syncNow();
+    await bram.engine.syncNow();
+    await anna.engine.updateItem(melk.itemId, { name: 'Halfvolle melk' });
+    await cutPull(anna, async () => {
+      await bram.engine.updateItem(melk.itemId, { name: 'Volle melk' });
+      await bram.engine.addItem({ name: 'Brood', quantity: 1, unit: 'stuk' });
+      await bram.engine.addItem({ name: 'Kaas', quantity: 1, unit: 'stuk' });
+      await bram.engine.syncNow();
+    });
+    expect(anna.engine.getSnapshot().open.find((i) => i.id === melk.itemId)!.name).toBe('Volle melk');
   });
 });
 

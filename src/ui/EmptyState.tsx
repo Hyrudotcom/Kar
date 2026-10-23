@@ -30,7 +30,7 @@ export function EmptyState({
         </AppText>
       ) : null}
       {body ? (
-        <AppText variant="body" color="textMuted" align="center">
+        <AppText variant="callout" color="textMuted" align="center" style={styles.body}>
           {body}
         </AppText>
       ) : null}
@@ -48,5 +48,6 @@ export function EmptyState({
 const styles = StyleSheet.create({
   root: { alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl },
   icon: { marginBottom: spacing.sm },
+  body: { maxWidth: 300 },
   primary: { alignSelf: 'stretch', marginTop: spacing.md },
 });

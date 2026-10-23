@@ -112,6 +112,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const transitioning = useRef(false);
   /** Single flight for the removal flow (engine listener, foreground check and establish can all detect it). */
   const losing = useRef(false);
+  const lastReopen = useRef(0);
 
   const stopEngine = useCallback(async () => {
     const e = engineRef.current;
@@ -170,6 +171,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
       }
       await backend.kv.setItem(KV_KEYS.lastUserId, user.id).catch(() => undefined);
+
+      // A delete of this user's file that failed at sign-out is done now, before the file is used
+      // again; afterwards the id leaves the queue, so a later start never deletes new offline edits.
+      const queued = await readPendingWipes(backend);
+      if (queued.includes(user.id)) {
+        await backend.local.wipe(user.id, null).catch((err: unknown) => console.warn('Goedboodschap: local data could not be deleted', err));
+        const rest = (await readPendingWipes(backend)).filter((x) => x !== user.id);
+        await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify(rest)).catch(() => undefined);
+        if (stale()) return;
+      }
 
       const cached = await readCache(backend, user.id);
       if (stale()) return;
@@ -250,6 +261,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (losing.current || transitioning.current || stateRef.current.kind === 'removed') return;
     losing.current = true;
     try {
+      // Removed, or did this user join another household on another phone? Only the server knows.
+      // A switch keeps the file: the next engine re-addresses the outbox to the new household.
+      const mine = await backend.households.getMyHousehold();
+      if (transitioning.current) return;
+      if (!mine.ok) {
+        // Unknown (no connection, server error): decide when the connection comes back.
+        let done = false;
+        const unsub = backend.connectivity.subscribe((online) => {
+          if (!online || done) return;
+          done = true;
+          queueMicrotask(() => unsub());
+          void lostRef.current(user, householdName);
+        });
+        return;
+      }
+      if (mine.household && mine.role) {
+        const s = stateRef.current;
+        if (s.kind === 'ready' && s.household.id === mine.household.id) {
+          // Still a member of this very household (a not_member raced a re-join): reopen, but never in a loop.
+          if (Date.now() - lastReopen.current < 60_000) return;
+          lastReopen.current = Date.now();
+        }
+        await backend.kv
+          .setItem(cacheKey(user.id), JSON.stringify({ id: mine.household.id, name: mine.household.name, role: mine.role }))
+          .catch(() => undefined);
+        await establish(user, { skipAccountCheck: true });
+        return;
+      }
       generation.current++;
       const e = engineRef.current;
       engineRef.current = null;
@@ -361,9 +400,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(
     async (force = false): Promise<ActionResult> => {
       const s = stateRef.current;
-      if (s.kind === 'ready') {
-        const pending = s.engine.getStatus().pendingCount;
-        if (pending > 0 && !force) return { ok: false, error: 'pending', pending };
+      if (!force && s.kind === 'ready') {
+        // Try to deliver first; then ask about what is still unsent or failed (both are deleted).
+        if (backend.connectivity.isOnline()) await s.engine.syncNow();
+        const pending = s.engine.unsent().count;
+        if (pending > 0) return { ok: false, error: 'pending', pending };
+      }
+      if (!force && s.kind === 'unavailable') {
+        // E.g. the file could not be opened: it can still hold offline edits.
+        const pending = await backend.local.countUnsent(s.user.id).catch(() => 0);
+        if (pending > 0) return { ok: false, error: 'pending', pending };
       }
       generation.current++;
       if (s.kind !== 'booting' && s.kind !== 'signedOut') {
@@ -383,8 +429,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const s = stateRef.current;
       if (s.kind !== 'ready') return { ok: false, error: 'not_member' };
       if (!backend.connectivity.isOnline()) return { ok: false, error: 'offline' };
-      const pending = s.engine.getStatus().pendingCount;
-      if (pending > 0 && !force) return { ok: false, error: 'pending', pending };
+      if (!force) {
+        await s.engine.syncNow();
+        const pending = s.engine.unsent().count;
+        if (pending > 0) return { ok: false, error: 'pending', pending };
+      }
       transitioning.current = true;
       try {
         const r = await backend.households.leaveHousehold(s.household.id);
@@ -428,7 +477,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Online-only flow: drain the outbox first (syncNow also retries rows that wait for a backoff),
       // so nothing is left behind in the old household. What still cannot be sent needs a confirmation.
       await s.engine.syncNow();
-      const pending = s.engine.getStatus().pendingCount;
+      const pending = s.engine.unsent().count;
       if (pending > 0 && !force) return { ok: false, error: 'pending', pending };
       transitioning.current = true;
       try {

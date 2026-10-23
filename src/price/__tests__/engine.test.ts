@@ -145,15 +145,27 @@ describe('ranking and labels', () => {
     ]);
   });
 
-  test('exact tie: ordered by chain name, only the first gets the label, the other shows +€0,00', () => {
+  test('exact tie: no single "Goedkoopste", every tied store is "Even goedkoop" with no +€0,00 delta', () => {
     const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml');
     b.simple('melk-halfvol', 'jumbo', 119, 1000, 'ml');
     b.simple('melk-halfvol', 'ah', 119, 1000, 'ml');
+    b.simple('melk-halfvol', 'plus', 125, 1000, 'ml');
     const r = compareBaskets(input([item('melk')], b.data));
     expect(r.stores.map((s) => [s.chain_name, s.label, s.delta_cents])).toEqual([
-      ['Albert Heijn', 'cheapest', null],
-      ['Jumbo', null, 0],
+      ['Albert Heijn', 'tied', null],
+      ['Jumbo', 'tied', null],
+      ['Plus', null, 6],
     ]);
+  });
+
+  test('priced lines carry their exact observation time (age_days is floored)', () => {
+    const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml').catalog('kaas', ['kaas'], 500, 'g');
+    const at = new Date(NOW - 13.9 * 86_400_000).toISOString();
+    b.simple('melk-halfvol', 'ah', 119, 1000, 'ml', at);
+    b.simple('kaas', 'ah', 650, 500, 'g');
+    b.simple('melk-halfvol', 'jumbo', 129, 1000, 'ml');
+    const r = compareBaskets(input([item('melk'), item('kaas')], b.data));
+    expect(store(r, 'ah').lines[0]).toMatchObject({ age_days: 13, observed_at: at, status: 'stale' });
   });
 
   test('tie with equal names falls back to chain id (fully deterministic)', () => {

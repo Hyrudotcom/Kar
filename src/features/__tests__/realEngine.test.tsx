@@ -121,7 +121,7 @@ describe('with the real sync engine', () => {
     await act(async () => backend.connectivity.set(true));
     await signIn(backend, 'tim@voorbeeld.nl');
     await renderApp(<App />, backend);
-    expect(await screen.findByText('Op deze telefoon staan nog 1 wijziging van een ander account die nog niet verstuurd zijn. Als je doorgaat, worden ze weggegooid.')).toBeTruthy();
+    expect(await screen.findByText('Op deze telefoon staan nog 1 wijziging van een ander account die nog niet verstuurd is. Als je doorgaat, worden ze weggegooid.')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByLabelText('Doorgaan en weggooien')));
     await screen.findByText('Je lijst is leeg');
     expect(factory.exists(jan.id)).toBe(false);

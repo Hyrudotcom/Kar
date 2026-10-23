@@ -24,7 +24,7 @@ export function InviteCodeSheet({ visible, onClose, onCode }: { visible: boolean
     <BottomSheet visible={visible} onClose={onClose} title="Uitnodigingscode" testID="invite-code-sheet">
       <View style={styles.gap}>
         <TextField
-          label="Code"
+          accessibilityLabel="Uitnodigingscode"
           value={value}
           onChangeText={(t) => {
             setValue(t.toUpperCase());
@@ -35,12 +35,12 @@ export function InviteCodeSheet({ visible, onClose, onCode }: { visible: boolean
           autoCorrect={false}
           autoComplete="off"
           maxLength={8}
-          placeholder="K7QM4Z"
+          placeholder="6 tekens"
           error={error}
           autoFocus
           testID="invite-code-input"
         />
-        <PrimaryButton label="Doorgaan" onPress={submit} />
+        <PrimaryButton label="Doorgaan" onPress={submit} disabled={value.replace(/[\s-]/g, '').length < 6} />
       </View>
     </BottomSheet>
   );

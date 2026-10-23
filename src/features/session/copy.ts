@@ -5,12 +5,20 @@ export const OFFLINE_ONLINE_ONLY = 'Geen internet. Inloggen en lid worden kan al
 export const SERVER_ERROR = 'Er ging iets mis. Probeer het opnieuw.';
 /** "Deel lijst" offline: the login/join sentence does not fit there. */
 export const OFFLINE_SHARE = 'Geen internet. Delen kan alleen online.';
+/** Household actions offline (rename, remove member, delete account, leave). */
+export const OFFLINE_ACTION = 'Geen internet. Dit kan alleen online.';
+/** Joining a household offline (invite sheet). */
+export const OFFLINE_JOIN = 'Geen internet. Lid worden kan alleen online.';
 
-export function householdErrorText(error: HouseholdCallError | 'pending' | 'offline', householdName = 'Thuis'): string {
+export function householdErrorText(
+  error: HouseholdCallError | 'pending' | 'offline',
+  householdName = 'Thuis',
+  offlineText: string = OFFLINE_ACTION,
+): string {
   switch (error) {
     case 'network':
     case 'offline':
-      return OFFLINE_ONLINE_ONLY;
+      return offlineText;
     case 'invalid_code':
       return 'Deze code bestaat niet. Controleer de code en probeer het opnieuw.';
     case 'expired_code':
@@ -53,6 +61,11 @@ export function authErrorText(error: AuthErrorCode): string | null {
     default:
       return 'Inloggen lukte niet. Probeer het opnieuw.';
   }
+}
+
+/** Confirm title before unsent changes are deleted: "Je hebt 1 wijziging die nog niet verstuurd is." */
+export function unsentTitle(n: number): string {
+  return `Je hebt ${changesText(n)} die nog niet verstuurd ${n === 1 ? 'is' : 'zijn'}.`;
 }
 
 /** "1 wijziging" / "4 wijzigingen". */

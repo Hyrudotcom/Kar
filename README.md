@@ -29,6 +29,6 @@ npm run db:stop
 ```
 
 The app needs `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`);
-a device build without them fails with a configuration error. `EXPO_PUBLIC_DEMO_MODE=1` runs a device
-build on in-memory demo data. The web export (`npm run export:web`, `npm run test:e2e`) always uses the
+a device build without them fails with a configuration error (device builds never contain the demo
+backend). The web export (`npm run export:web`, `npm run test:e2e`) always uses the
 demo backend and is for visual inspection only.

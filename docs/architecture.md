@@ -516,9 +516,8 @@ promotions threshold; 7/14-day boundaries; missing `observed_at`; override makes
   top of `ListSnapshot`.
 - Web export is for visual inspection only: `createBackend.web.ts` always uses the in-memory demo backend
   (`src/lib/demo`, `DirectEngine` on the sync builder's `FakeServer`). Device builds always use Supabase +
-  the real sync engine (expo-sqlite, NetInfo); the demo is only used on a device when
-  `EXPO_PUBLIC_DEMO_MODE=1` is set explicitly, and a device build without Supabase configuration shows a
-  configuration error instead of silently falling back to demo data.
+  the real sync engine (expo-sqlite, NetInfo) and do not bundle the demo; a device build without
+  Supabase configuration shows a configuration error instead of silently falling back to demo data.
 - `react-native-url-polyfill/auto` is imported first in `app/_layout.tsx` (supabase-js on Hermes).
 
 ---
