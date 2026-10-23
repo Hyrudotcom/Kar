@@ -1,13 +1,17 @@
 /**
  * Price data for "Goedkoopste route" and the settings toggle: the licensed dataset (read-only),
  * whether a comparison is possible at all (>= 2 verified chains), and the per-user opt-in.
- * Loaded once per household session, and again when the connection comes back after a failed load.
+ * Loaded once per household session, again when the connection comes back after a failed load, and
+ * refreshed quietly (no loading state) when the app returns to the foreground or the tab gains focus,
+ * at most once per REFRESH_MIN_INTERVAL_MS: another member's "Verkeerd product" and newer licensed
+ * prices reach this phone without a restart.
  *
  * A failed load is only an error ("Prijzen tijdelijk niet beschikbaar") when a comparison was shown
  * before (a cached comparison exists). Otherwise nothing proves prices exist at all (v1: none), so
  * the screen stays "Geen geverifieerde prijzen beschikbaar" without a button.
  */
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 
 import type { PriceDataset } from '@/src/contracts';
 import { compareBaskets } from '@/src/price';
@@ -24,6 +28,8 @@ export interface PriceState {
   optIn: boolean;
   setOptIn(enabled: boolean): Promise<void>;
   reload(): void;
+  /** Quiet reload when the last load is older than REFRESH_MIN_INTERVAL_MS (foreground, tab focus). */
+  refresh(): void;
   /** "Verkeerd product" / "Toch gebruiken" (household-wide). */
   setOverride(catalogItemId: string, chainId: string, wrong: boolean): Promise<void>;
 }
@@ -41,6 +47,8 @@ const availableKey = (householdId: string) => `price_available_${householdId}`;
 
 /** Price reads never hold the tab hostage: a stalled connection counts as a failed load. */
 export const PRICE_LOAD_TIMEOUT_MS = 8_000;
+/** Minimum time between two quiet refreshes of the dataset. */
+export const REFRESH_MIN_INTERVAL_MS = 30_000;
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('timeout')), ms);
@@ -77,6 +85,8 @@ export function PriceProvider({ children }: { children: ReactNode }) {
   const householdId = state.kind === 'ready' ? state.household.id : null;
   const engine = state.kind === 'ready' ? state.engine : null;
   const [nonce, setNonce] = useState(0);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const lastLoadAt = useRef(0);
   const key = userId && householdId ? `${userId}|${householdId}|${nonce}` : null;
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [hint, setHint] = useState<{ householdId: string; available: boolean } | null>(null);
@@ -117,24 +127,47 @@ export function PriceProvider({ children }: { children: ReactNode }) {
     };
   }, [backend, householdId]);
 
+  const loadedRef = useRef<Loaded | null>(null);
+  useLayoutEffect(() => {
+    loadedRef.current = loaded;
+  });
+
   useEffect(() => {
     if (!key || !userId || !householdId) return;
     const my = ++seq.current;
+    lastLoadAt.current = Date.now();
     void (async () => {
       try {
         const data = await withTimeout(backend.prices.loadDataset(householdId), PRICE_LOAD_TIMEOUT_MS);
         if (my !== seq.current) return;
+        lastLoadAt.current = Date.now();
         setLoaded({ key, status: 'ready', dataset: data, failed: false });
         const ok = isComparisonAvailable(data);
         setHint({ householdId, available: ok });
         await backend.kv.setItem(availableKey(householdId), ok ? '1' : '0').catch(() => undefined);
       } catch {
+        // A quiet refresh that fails keeps what is on screen (its freshness labels stay honest).
+        const prev = loadedRef.current;
+        if (my === seq.current && prev?.key === key && prev.dataset) return;
         // Only a comparison shown before (cached) proves that prices exist and are now missing.
         const cache = await engine?.readPriceCache().catch(() => null);
         if (my === seq.current) setLoaded({ key, status: cache ? 'error' : 'ready', dataset: null, failed: true });
       }
     })();
-  }, [backend, key, userId, householdId, engine]);
+  }, [backend, key, userId, householdId, engine, refreshTick]);
+
+  const refresh = useCallback(() => {
+    if (Date.now() - lastLoadAt.current < REFRESH_MIN_INTERVAL_MS) return;
+    lastLoadAt.current = Date.now();
+    setRefreshTick((t) => t + 1);
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') refresh();
+    });
+    return () => sub.remove();
+  }, [refresh]);
 
   // Opt-in: server value when reachable, else the last value seen on this device. Never reset by a
   // failed dataset load.
@@ -211,9 +244,10 @@ export function PriceProvider({ children }: { children: ReactNode }) {
       optIn: optInValue,
       setOptIn,
       reload: () => setNonce((n) => n + 1),
+      refresh,
       setOverride,
     }),
-    [status, dataset, available, optInValue, setOptIn, setOverride],
+    [status, dataset, available, optInValue, setOptIn, setOverride, refresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

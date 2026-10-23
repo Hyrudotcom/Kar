@@ -151,6 +151,40 @@ describe('Mijn lijst', () => {
     expect(backend.world.server.item(id)?.checked).toBe(false);
   });
 
+  it('round 4: re-adding a settled checked item shows it in the open list at once, and typing again does not double it', async () => {
+    jest.useFakeTimers();
+    try {
+      await setup();
+      await type('melk');
+      await type('brood');
+      await a11yAction('row-Melk', 'toggle');
+      await act(async () => {
+        jest.advanceTimersByTime(1600);
+      });
+      await flush();
+      expect(screen.getAllByTestId(/^row-/).map((r) => r.props.testID)).toEqual(['row-Brood']);
+      await type('melk');
+      expect(screen.getByText('Melk teruggezet')).toBeTruthy();
+      expect(screen.getAllByTestId(/^row-/).map((r) => r.props.testID)).toEqual(['row-Melk', 'row-Brood']);
+      expect(screen.queryByText(/Afgevinkt/)).toBeNull();
+      expect(row('Melk. Niet afgevinkt.')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('round 4: quick repeated merges add up in one snackbar and one undo takes them all back', async () => {
+    await setup();
+    for (let i = 0; i < 4; i++) await type('melk');
+    expect(row('Melk, 4. Niet afgevinkt.')).toBeTruthy();
+    expect(screen.getByText('Melk +3')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Ongedaan maken'));
+    });
+    await flush();
+    expect(row('Melk. Niet afgevinkt.')).toBeTruthy();
+  });
+
   it('deletes via the accessibility action, adds deletions up in one snackbar and undoes all', async () => {
     await setup();
     await type('melk');

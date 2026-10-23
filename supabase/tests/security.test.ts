@@ -297,7 +297,7 @@ describe('removed member', () => {
     expect(await apply(victim, H.hid, [mutation(H.hid, 'delete_item', { item_id: item })])).toEqual({ ok: false, error: 'not_member' });
     expect(await rpc(victim, 'pull_changes', { p_household_id: H.hid, p_since_seq: 0 })).toEqual({ ok: false, error: 'not_member' });
     expect(await rpc(victim, 'create_invite', { p_household_id: H.hid })).toEqual({ ok: false, error: 'not_member' });
-    expect(await rpc(victim, 'get_my_household')).toEqual({ ok: true, household: null, role: null, members: [] });
+    expect(await rpc(victim, 'get_my_household')).toEqual({ ok: true, household: null, role: null, members: [], merged_from: [] });
     // the old code no longer works for the removed member (or anyone)
     expect(await rpc(victim, 'accept_invite', { p_code: inv.code })).toEqual({ ok: false, error: 'expired_code' });
     expect(await rpc(victim, 'preview_invite', { p_code: inv.code })).toEqual({ ok: false, error: 'expired_code' });

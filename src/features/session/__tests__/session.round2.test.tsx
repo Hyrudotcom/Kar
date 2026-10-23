@@ -67,9 +67,10 @@ describe('joining a household on my other phone', () => {
     await act(async () => backend.connectivity.set(false));
     await add('melk');
     await add('brood');
-    // Phone A accepts Sanne's invite meanwhile.
+    // Phone A accepts Sanne's invite meanwhile (Jan was alone: his household merges into hers).
     backend.world.leave(jan.id);
     backend.world.join(jan.id, target, 'member');
+    backend.world.recordMerge(jan.id, own, target);
     await act(async () => backend.connectivity.set(true));
 
     await waitFor(() => expect(openNames(backend, target)).toEqual(['Brood', 'Melk']));

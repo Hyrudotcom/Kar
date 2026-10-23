@@ -267,10 +267,11 @@ export function HouseholdScreen() {
           <AppText variant="footnote" color="textMuted" accessibilityRole="header">
             Leden
           </AppText>
-          {members.map((m) => (
+          {members.map((m, i) => (
             <MemberRow
               key={m.user_id}
               member={m}
+              last={i === members.length - 1}
               isMe={m.user_id === user.id}
               canRemove={isOwner && m.user_id !== user.id}
               onRemove={() => {
@@ -298,7 +299,7 @@ export function HouseholdScreen() {
             <AppText variant="body" style={styles.flex}>
               Prijsvergelijking tonen
             </AppText>
-            <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+            <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden aria-hidden>
               <Switch
                 value={prices.optIn}
                 trackColor={{ true: c.accent, false: c.border }}
@@ -310,12 +311,12 @@ export function HouseholdScreen() {
           </Pressable>
         ) : null}
 
-        <View style={styles.block}>
+        <View style={styles.accountBlock}>
           <Divider />
           <AppText variant="footnote" color="textMuted" accessibilityRole="header" style={styles.groupHead}>
             Account
           </AppText>
-          <AppText variant="callout" color="textMuted" testID="signed-in-as">
+          <AppText variant="footnote" color="textMuted" testID="signed-in-as">
             {`Ingelogd als ${user.email ?? user.displayName}`}
           </AppText>
           <TextButton label={signingOut ? 'Uitloggen…' : 'Uitloggen'} accessibilityLabel="Uitloggen" tone="text" size="callout" disabled={signingOut} onPress={() => void signOut()} />
@@ -365,12 +366,13 @@ export function HouseholdScreen() {
   );
 }
 
-function MemberRow({ member, isMe, canRemove, onRemove }: { member: HouseholdMember; isMe: boolean; canRemove: boolean; onRemove(): void }) {
+function MemberRow({ member, last, isMe, canRemove, onRemove }: { member: HouseholdMember; last: boolean; isMe: boolean; canRemove: boolean; onRemove(): void }) {
   const c = useColors();
   const name = member.display_name || 'Naamloos';
   const label = `${name}${isMe ? ' (jij)' : ''}${member.role === 'owner' ? ', eigenaar' : ''}`;
   return (
-    <View style={[styles.member, { borderBottomColor: c.border }]}>
+    // No rule under the last member: the Account divider follows (D4-01, no double line).
+    <View style={[styles.member, { borderBottomColor: c.border }, last ? styles.memberLast : null]}>
       <View style={styles.memberMain} accessible accessibilityLabel={label}>
         <View style={[styles.avatar, { backgroundColor: c.surface }]}>
           <AppText variant="footnote" style={styles.strong}>
@@ -386,7 +388,7 @@ function MemberRow({ member, isMe, canRemove, onRemove }: { member: HouseholdMem
           </AppText>
         ) : null}
       </View>
-      {canRemove ? <TextButton label="Verwijderen" accessibilityLabel={`${name} verwijderen`} tone="danger" onPress={onRemove} /> : null}
+      {canRemove ? <TextButton label="Verwijderen" accessibilityLabel={`${name} verwijderen`} tone="danger" size="callout" onPress={onRemove} /> : null}
     </View>
   );
 }
@@ -400,8 +402,11 @@ const styles = StyleSheet.create({
   codeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   flex: { flex: 1 },
   member: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.rowMinHeight, borderBottomWidth: StyleSheet.hairlineWidth, gap: spacing.md },
+  memberLast: { borderBottomWidth: 0 },
+  // Account actions as 48 pt rows without extra gaps between them (D4-07).
+  accountBlock: { gap: 0 },
   memberMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   toggleRow: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.minTouch },
-  groupHead: { marginTop: spacing.sm },
+  groupHead: { marginTop: spacing.sm, marginBottom: spacing.sm },
 });

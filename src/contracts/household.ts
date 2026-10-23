@@ -24,6 +24,12 @@ export type GetMyHouseholdResult = RpcResult<{
   household: HouseholdRow | null;
   role: 'owner' | 'member' | null;
   members: HouseholdMember[];
+  /**
+   * Households of this user that accept_invite merged into this one (the user was alone there).
+   * Another phone whose file still holds one of them follows along; any other household change is
+   * a removal or leave for that phone. Optional: older servers do not send it.
+   */
+  merged_from?: Uuid[];
 }>;
 
 /** create_household(p_name text default 'Thuis'): idempotent "ensure". Returns existing if already a member. */

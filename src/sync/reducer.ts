@@ -29,7 +29,7 @@ export interface SimResult {
 
 export interface ReduceInput {
   base: ReadonlyMap<Uuid, ListItemRow>;
-  /** Outbox entries of the current household, ascending seq. */
+  /** Outbox entries of the current household, in send order (byOutboxOrder). */
   entries: readonly OutboxEntry[];
   /** Persisted aliases (add id -> target id) from earlier acks. */
   aliases: ReadonlyMap<Uuid, Uuid>;
@@ -215,8 +215,10 @@ export function reduce(input: ReduceInput): ReduceOutput {
 
     if (m.kind === 'clear_checked') {
       const ids = !pending && entry.result?.affected_ids ? entry.result.affected_ids : m.payload.item_ids;
+      const undone = pending ? new Set(entry.localMeta?.restoreOnAck ?? []) : null;
       const affected: Uuid[] = [];
       for (const raw of ids) {
+        if (undone?.has(raw)) continue; // "Ongedaan maken" while unanswered: shown again at once
         const id = resolve(raw);
         const r = rows.get(id);
         if (!r || r.deleted_at !== null || (pending && !r.checked)) continue;

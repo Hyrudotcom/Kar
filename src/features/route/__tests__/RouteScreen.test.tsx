@@ -1,10 +1,11 @@
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
+import { AppState } from 'react-native';
 
 import type { ComparisonResult, PriceDataset } from '@/src/contracts';
 import { DatasetBuilder } from '@/src/price/__tests__/fixtures';
 
 import { flush, makeBackend, renderReady, signIn } from '../../__tests__/helpers';
-import { PRICE_LOAD_TIMEOUT_MS, usePrices, type PriceState } from '../PriceContext';
+import { PRICE_LOAD_TIMEOUT_MS, REFRESH_MIN_INTERVAL_MS, usePrices, type PriceState } from '../PriceContext';
 import { isCachedComparisonUsable, RouteScreen, speakCents, storeAccessibilityLabel } from '../RouteScreen';
 
 jest.mock('react-native-safe-area-context', () => require('../../__tests__/mocks').safeAreaMock());
@@ -214,6 +215,40 @@ describe('Goedkoopste route', () => {
     await act(async () => fireEvent.press(screen.getByLabelText('Toch gebruiken')));
     await flush();
     expect(within(screen.getByTestId('store-jumbo')).getByText('Goedkoopste · 1 verouderd')).toBeTruthy();
+  });
+
+  it('round 4: another member\'s "Verkeerd product" reaches this phone on foreground, without a restart', async () => {
+    const handlers: ((s: string) => void)[] = [];
+    const orig = AppState.addEventListener;
+    AppState.addEventListener = ((type: string, h: (s: string) => void) => {
+      if (type === 'change') handlers.push(h);
+      return { remove: () => undefined };
+    }) as unknown as typeof orig;
+    try {
+      const backend = await setup({ priceDataset: fixture() }, [{ name: 'Melk', quantity: 2 }, { name: 'Brood' }]);
+      await act(async () => fireEvent.press(await screen.findByLabelText('Prijzen vergelijken')));
+      await flush();
+      expect(within(screen.getByTestId('store-jumbo')).getByText('Goedkoopste · 1 verouderd')).toBeTruthy();
+      const hh = backend.world.memberships.get(backend.world.currentUser!.id)!.householdId;
+      // Sanne, on her own phone, marks Jumbo's melk as the wrong product.
+      backend.world.overrides.push({ household_id: hh, catalog_item_id: 'melk', chain_id: 'jumbo', created_by: null, created_at: new Date().toISOString() });
+      // Within the minimum interval nothing is reloaded.
+      await act(async () => handlers.forEach((h) => h('active')));
+      await flush();
+      expect(within(screen.getByTestId('store-jumbo')).getByText('Goedkoopste · 1 verouderd')).toBeTruthy();
+      const now = Date.now();
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(now + REFRESH_MIN_INTERVAL_MS + 1);
+      try {
+        await act(async () => handlers.forEach((h) => h('active')));
+        await flush();
+      } finally {
+        clock.mockRestore();
+      }
+      expect(within(screen.getByTestId('store-jumbo')).getByText('1 van 2 prijzen')).toBeTruthy();
+      expect(within(screen.getByTestId('store-ah')).getByText('Enige complete mand')).toBeTruthy();
+    } finally {
+      AppState.addEventListener = orig;
+    }
   });
 
   it('no complete basket: "Geen winkel heeft al je prijzen" and "Niet vergelijken" for items without any price', async () => {

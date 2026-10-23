@@ -306,8 +306,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   /**
    * Decides what a membership answer means: still a member (refresh the info; reopen an engine that
-   * got not_member), switched household on another phone (reopen on the new one; start() re-addresses
-   * the outbox), or removed (stop, collect unsent edits, wipe, show the notice). An unknown answer is
+   * got not_member), the old household was merged into a new one on another phone (merged_from:
+   * reopen on the new one; start() re-addresses the outbox), or removed / left / any other household
+   * (stop, collect unsent edits, wipe, show the notice). An unknown answer is
    * retried on a timer with backoff and at once when the connection comes back; meanwhile edits keep
    * going into the outbox.
    */
@@ -346,11 +347,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           }
           lastReopen.current = Date.now();
         }
-        await backend.kv
-          .setItem(cacheKey(user.id), JSON.stringify({ id: mine.household.id, name: mine.household.name, role: mine.role }))
-          .catch(() => undefined);
-        await establish(user, { skipAccountCheck: true });
-        return;
+        // Another household than the one this phone's file holds. Only when accept_invite merged the
+        // old (solo) household into it does this phone follow, outbox included. Otherwise the user
+        // was removed or left (maybe a new household on another phone): the old household's unsent
+        // edits must never be posted into the new one, so it is handled as a removal below.
+        const oldId = s.kind === 'ready' ? s.household.id : ((await readCache(backend, user.id))?.id ?? null);
+        if (transitioning.current || gen !== generation.current) return;
+        if (oldId === null || oldId === mine.household.id || (mine.merged_from ?? []).includes(oldId)) {
+          await backend.kv
+            .setItem(cacheKey(user.id), JSON.stringify({ id: mine.household.id, name: mine.household.name, role: mine.role }))
+            .catch(() => undefined);
+          await establish(user, { skipAccountCheck: true });
+          return;
+        }
       }
       generation.current++;
       clearRetry();
@@ -398,11 +407,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const s = stateRef.current;
       if (!user) {
         if (s.kind === 'signedOut') return;
-        // Session ended (sign-out or expiry). Keep the database: the outbox is only resent when the
-        // same user id signs in again (5.10). Explicit sign-out wipes before calling auth.signOut().
+        // Session ended without our sign-out (refresh token rejected, e.g. the account was deleted on
+        // another phone). Unsent changes keep the file: they are resent when the same user signs in
+        // again (5.10). Without them nothing would be lost, so the user's list leaves the phone.
         generation.current++;
-        void stopEngine();
+        const e = engineRef.current;
+        engineRef.current = null;
         setState({ kind: 'signedOut' });
+        if (s.kind === 'booting') {
+          void e?.dispose().catch(() => undefined);
+          return;
+        }
+        const prev = s.user.id;
+        void (async () => {
+          const unsent = e ? e.unsent().count : await backend.local.countUnsent(prev).catch(() => 1);
+          if (unsent > 0) {
+            await e?.dispose().catch(() => undefined);
+            return;
+          }
+          await wipeUser(prev, e);
+          await backend.kv.removeItem(KV_KEYS.lastUserId).catch(() => undefined);
+        })();
         return;
       }
       if (s.kind === 'ready' && s.user.id === user.id) {
@@ -438,7 +463,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       alive = false;
       unsub();
     };
-  }, [backend, establish, setState, stopEngine]);
+  }, [backend, establish, setState, stopEngine, wipeUser]);
 
   // Stop the engine and any membership retry on unmount.
   useEffect(
@@ -572,7 +597,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transitioning.current = true;
       try {
         const r = await backend.households.acceptInvite(code);
-        if (!r.ok) return { ok: false, error: r.error };
+        if (!r.ok) {
+          // The answer may have been lost after the server committed the join (or an earlier lost
+          // join makes this one "already_member"): where is the user now?
+          const unsure = r.error === 'network' || r.error === 'server' || r.error === 'already_member';
+          const mine = unsure ? await backend.households.getMyHousehold() : null;
+          const joined = !!mine && mine.ok && !!mine.household && mine.household.id !== s.household.id;
+          if (!joined) return { ok: false, error: r.error };
+        }
         generation.current++;
         await wipe(s.user.id);
       } finally {

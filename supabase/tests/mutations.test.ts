@@ -209,7 +209,8 @@ describe('idempotent replay', () => {
     const seqB = await lastSeq(B.hid);
     // This phone re-sends its outbox, re-addressed to the new household, with the same id.
     const again = await apply(A.owner, B.hid, [{ ...m, household_id: B.hid }]);
-    expect(again.results).toEqual([{ id: m.id, status: 'applied', replayed: true }]);
+    // Round 4: where the add lives now (merged into Bram's Brood), never the old household's ids.
+    expect(again.results).toEqual([{ id: m.id, status: 'merged', item_id: bramBrood, replayed: true }]);
     expect(again.server_seq).toBe(seqB);
     expect(await lastSeq(B.hid)).toBe(seqB); // nothing applied twice
     expect((await itemRow(bramBrood)).quantity).toBe('3.000');

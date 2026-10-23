@@ -71,6 +71,18 @@ export function JoinInviteSheet() {
     });
   }, [backend, retryOnline]);
 
+  // Joined after all (e.g. the answer to "Lid worden" was lost, then the session moved to the new
+  // household): the invitation is done, never a "Geen internet" sheet over the new list.
+  const joinedId = session.state.kind === 'ready' ? session.state.household.id : null;
+  const previewId = preview?.household_id ?? null;
+  const previewName = preview?.household_name ?? '';
+  useEffect(() => {
+    if (!code || !previewId || joinedId !== previewId) return;
+    void session.setPendingInvite(null);
+    snackbar.show({ message: `Je bent lid van ${previewName}` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, previewId, joinedId]);
+
   const close = () => {
     if (transient && code) setDismissed(code);
     else void session.setPendingInvite(null);
@@ -87,7 +99,8 @@ export function JoinInviteSheet() {
     } else if (r.error === 'pending' && r.pending) {
       setPending(r.pending);
     } else {
-      setError(householdErrorText(r.error, currentName, OFFLINE_JOIN));
+      // "Je bent al lid van …" names the household of this invitation, never the previous one.
+      setError(householdErrorText(r.error, r.error === 'already_member' ? preview.household_name : currentName, OFFLINE_JOIN));
     }
   };
 

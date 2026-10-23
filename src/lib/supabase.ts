@@ -5,6 +5,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
 
+import { appSecureStore, sessionStorageKey } from './appSecureStore';
 import { env } from './env';
 import { fetchWithTimeout } from './fetchWithTimeout';
 import { createChunkedStorage } from './secureStorage';
@@ -16,7 +17,8 @@ export function getSupabase(): SupabaseClient {
   if (!env.supabaseUrl || !env.supabaseAnonKey) throw new Error('Supabase is not configured (EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY)');
   client = createClient(env.supabaseUrl, env.supabaseAnonKey, {
     auth: {
-      storage: createChunkedStorage(),
+      storage: createChunkedStorage(appSecureStore),
+      storageKey: sessionStorageKey(env.supabaseUrl),
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,

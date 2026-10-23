@@ -46,6 +46,7 @@ describe('create_household / get_my_household', () => {
       household: rs[0].household,
       role: 'owner',
       members: [{ household_id: rs[0].household.id, user_id: u, role: 'owner', joined_at: expect.any(String), display_name: 'Jan' }],
+      merged_from: [],
     });
   });
 

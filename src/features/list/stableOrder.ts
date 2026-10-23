@@ -5,6 +5,8 @@
  *    Afgevinkt) until `settle()`; the screen calls settle 1.5 s after the last check and only when
  *    nobody is touching or scrolling;
  *  - new rows go straight to their section (new open rows at the top, by server position);
+ *  - a checked row brought back by an add ("Melk teruggezet") gets a new top position and goes
+ *    straight to the open section: only check taps linger, an add is visible at once;
  *  - deleted rows disappear; edits of visible rows update in place.
  */
 import type { Uuid, VisibleItem } from '@/src/contracts';
@@ -23,6 +25,7 @@ const byPositionDesc = (a: VisibleItem, b: VisibleItem) => b.position - a.positi
 export class StableOrder {
   private section = new Map<Uuid, Section>();
   private lastCheckedAt = new Map<Uuid, string>();
+  private lastPosition = new Map<Uuid, number>();
   private items: VisibleItem[] = [];
 
   /** Feeds a new snapshot; returns the display lists. Idempotent for the same input. */
@@ -32,13 +35,19 @@ export class StableOrder {
     const present = new Set<Uuid>();
     for (const it of all) {
       present.add(it.id);
-      if (!this.section.has(it.id)) this.section.set(it.id, it.checked ? 'checked' : 'open');
+      const prevPos = this.lastPosition.get(it.id);
+      // Only a restore by add moves a row to a higher position; an uncheck tap keeps it.
+      if (!this.section.has(it.id) || (!it.checked && prevPos !== undefined && it.position > prevPos)) {
+        this.section.set(it.id, it.checked ? 'checked' : 'open');
+      }
+      this.lastPosition.set(it.id, it.position);
       if (it.checked_at) this.lastCheckedAt.set(it.id, it.checked_at);
     }
     for (const id of [...this.section.keys()]) {
       if (!present.has(id)) {
         this.section.delete(id);
         this.lastCheckedAt.delete(id);
+        this.lastPosition.delete(id);
       }
     }
     return this.view();

@@ -13,7 +13,7 @@ import { hapticLight, hapticMedium } from '@/src/lib/haptics';
 import { normalizeName } from '@/src/shared/normalize';
 import { formatIncrement, parseEntry } from '@/src/shared/quantity';
 import { useHistory, useList, useSyncStatus } from '@/src/sync/hooks';
-import { EmptyState, ListIcon, SkeletonRows, useColors, useReducedMotion } from '@/src/ui';
+import { EmptyState, SkeletonRows, useColors, useReducedMotion } from '@/src/ui';
 import { spacing } from '@/src/ui/tokens';
 
 import { useSnackbar } from '../feedback/SnackbarProvider';
@@ -92,7 +92,15 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
           return;
         }
         if (r.outcome === 'merged') {
-          snackbar.show({ message: `${r.itemName} ${formatIncrement(quantity, unit)}`, onAction: () => engine.undo(r.undo) });
+          // Quick repeated merges add up in one snackbar; one undo takes them all back (design-spec 3).
+          const itemName = r.itemName;
+          snackbar.show({
+            message: `${itemName} ${formatIncrement(quantity, unit)}`,
+            group: `merge:${r.itemId}:${unit}`,
+            count: quantity,
+            groupMessage: (n) => `${itemName} ${formatIncrement(n, unit)}`,
+            onAction: () => engine.undo(r.undo),
+          });
         } else if (r.outcome === 'restored') {
           snackbar.show({ message: `${r.itemName} teruggezet`, onAction: () => engine.undo(r.undo) });
         }
@@ -214,7 +222,8 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
         {!snapshot.loaded ? (
           <SkeletonRows />
         ) : empty ? (
-          <EmptyState icon={<ListIcon size={40} color="textMuted" />} title="Je lijst is leeg" body="Typ hierboven wat je nodig hebt." testID="empty-list" />
+          // No illustration: the tab icon reused as artwork read as a button (D4-14, as on the route).
+          <EmptyState title="Je lijst is leeg" body="Typ hierboven wat je nodig hebt." testID="empty-list" />
         ) : (
           <FlatList
             ref={listRef}

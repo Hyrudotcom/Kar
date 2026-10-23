@@ -66,7 +66,10 @@ export function OutlineButton({ label, disabled, busy, style, ...rest }: BasePro
   );
 }
 
-/** Text-only button with a 48 pt touch target. tone: accent (default), danger, muted. */
+/**
+ * Text-only button with a 48 pt touch target. tone: accent (default), danger, muted, text.
+ * Body size is 500 weight; the smaller callout actions are 400, one weight per group (D4-07).
+ */
 export function TextButton({
   label,
   tone = 'accent',
@@ -92,7 +95,7 @@ export function TextButton({
         { alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start', opacity: pressed ? 0.6 : 1 },
         style,
       ]}>
-      <AppText variant={size} color={color} style={tone !== 'text' ? styles.textLabel : undefined}>
+      <AppText variant={size} color={color} style={size === 'body' && tone !== 'text' ? styles.textLabel : undefined}>
         {label}
       </AppText>
     </Pressable>

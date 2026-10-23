@@ -11,6 +11,7 @@ import { countUnsentChanges, createSyncEngine, SupabaseSyncTransport, wipeLocalD
 import { createNetInfoConnectivity, ExpoSqliteFactory } from '@/src/sync/native';
 
 import { isGoogleConfigured } from '../auth/google';
+import { appSecureStore } from '../appSecureStore';
 import { createSecureKeyValue } from '../secureStorage';
 import { getSupabase } from '../supabase';
 import { createAuth, createHouseholds, createPrices } from './supabaseApis';
@@ -49,7 +50,7 @@ export function createSupabaseBackend(): Backend {
     prices: createPrices(sb),
     local: createLocal(sb, connectivity),
     connectivity,
-    kv: createSecureKeyValue(),
+    kv: createSecureKeyValue(appSecureStore),
     providers: { apple: Platform.OS === 'ios', google: isGoogleConfigured() },
   };
 }

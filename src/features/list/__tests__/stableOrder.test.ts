@@ -66,4 +66,21 @@ describe('StableOrder (nothing moves under your finger)', () => {
     o.compute([it_('a', 1), it_('b', 2)], []);
     expect(names(o.compute([it_('b', 2)], []).open)).toEqual(['b']);
   });
+
+  it('round 4: a settled checked row restored by an add (new top position) goes straight to open', () => {
+    const o = new StableOrder();
+    o.compute([it_('b', 2)], [it_('a', 1, true, '2026-10-23T09:00:00Z')]);
+    const v = o.compute([it_('a', 5), it_('b', 2)], []);
+    expect(names(v.open)).toEqual(['a', 'b']);
+    expect(v.checked).toEqual([]);
+    expect(v.lingering).toEqual([]);
+  });
+
+  it('round 4: an uncheck tap (same position) still lingers in Afgevinkt until settle()', () => {
+    const o = new StableOrder();
+    o.compute([it_('b', 2)], [it_('a', 1, true, '2026-10-23T09:00:00Z')]);
+    const v = o.compute([it_('a', 1), it_('b', 2)], []);
+    expect(names(v.open)).toEqual(['b']);
+    expect(v.lingering).toEqual(['id-a']);
+  });
 });

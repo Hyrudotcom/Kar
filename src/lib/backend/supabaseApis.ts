@@ -26,15 +26,44 @@ function authError(e: unknown): AuthErrorCode {
   return 'unknown';
 }
 
+/**
+ * The user of the session still in storage. auth-js keeps an expired session in storage when its
+ * refresh failed for lack of network (and removes it on a real rejection), but reports "no session"
+ * for it: offline at a cold start is not signed out (the list and its outbox must stay reachable).
+ */
+async function storedUser(sb: SupabaseClient): Promise<User | null> {
+  try {
+    const auth = sb.auth as unknown as { storage: { getItem(k: string): string | null | Promise<string | null> }; storageKey: string };
+    const raw = await auth.storage.getItem(auth.storageKey);
+    const v = raw ? (JSON.parse(raw) as { user?: User; refresh_token?: string }) : null;
+    return v?.refresh_token && v.user?.id ? v.user : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createAuth(sb: SupabaseClient): AuthApi {
   const result = (error: unknown): AuthResult => (error ? { ok: false, error: authError(error) } : { ok: true });
   return {
     async getUser() {
+      // Local first: a stored session is enough to open the cached list at once. getSession() would
+      // first try to refresh an expired token (up to ~30 s of retries offline). A session the server
+      // really rejects is removed by auth-js, which then reports SIGNED_OUT through onUserChange.
+      const stored = await storedUser(sb);
+      if (stored) return toAuthUser(stored);
       const { data } = await sb.auth.getSession();
       return toAuthUser(data.session?.user);
     },
     onUserChange(listener) {
-      const { data } = sb.auth.onAuthStateChange((_event, session) => listener(toAuthUser(session?.user)));
+      // In order: an INITIAL_SESSION answer may need a storage read before the next event.
+      let chain = Promise.resolve();
+      const { data } = sb.auth.onAuthStateChange((event, session) => {
+        chain = chain.then(async () => {
+          if (session) return listener(toAuthUser(session.user));
+          // INITIAL_SESSION without a session but with one still stored = the refresh failed offline.
+          listener(event === 'INITIAL_SESSION' ? toAuthUser(await storedUser(sb)) : null);
+        }).catch(() => undefined);
+      });
       return () => data.subscription.unsubscribe();
     },
     async sendEmailCode(email) {

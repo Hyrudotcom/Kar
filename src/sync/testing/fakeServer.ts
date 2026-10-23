@@ -177,14 +177,12 @@ export class FakeServer {
       this.deliveries.set(m.id, (this.deliveries.get(m.id) ?? 0) + 1);
       const logged = this.log.get(m.id);
       if (logged) {
-        // Like apply_mutations (round 3): a log entry of another household (the user switched) is
-        // reported as done here, never with the other household's item id or server_seq.
         results.push(
           logged.user_id !== userId
             ? { id: m.id, status: 'rejected', reason: 'invalid' }
-            : logged.household_id === h.id
+            : logged.household_id === h.id || logged.result.status === 'rejected'
               ? { ...logged.result, replayed: true }
-              : { id: m.id, status: 'applied', replayed: true },
+              : this.movedReplay(h.id, m, logged.result),
         );
         continue;
       }
@@ -223,6 +221,19 @@ export class FakeServer {
     }
     if (changed) this.notify(h.id, 'items');
     return { ok: true, results, server_seq: h.last_seq };
+  }
+
+  /**
+   * Like apply_mutations (round 4): a mutation logged in the household the user left (accept_invite
+   * moved/merged its effect here). Never the other household's ids or seq; an add reports where its
+   * row lives now: merged when accept_invite merged it into another row, nothing when it is gone.
+   */
+  private movedReplay(householdId: Uuid, m: Mutation, logged: MutationResult): MutationResult {
+    if (m.kind !== 'add_item') return { id: m.id, status: logged.status, replayed: true };
+    const alias = this.aliases.get(m.payload.id);
+    const target = alias && alias.household_id === householdId ? alias.target_id : this.items.get(m.payload.id)?.household_id === householdId ? m.payload.id : null;
+    if (!target) return { id: m.id, status: 'applied', replayed: true };
+    return { id: m.id, status: target !== m.payload.id ? 'merged' : logged.status, item_id: target, replayed: true };
   }
 
   pullChanges(userId: Uuid | null, householdId: Uuid, sinceSeq: number, limit: number = LIMITS.pullPageSize): PullChangesResponse {

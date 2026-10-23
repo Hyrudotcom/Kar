@@ -20,6 +20,16 @@ export interface LocalMeta {
    * real answer arrives (applied / merged / restored) its exact inverse is queued (applyResults).
    */
   revertOnAck?: boolean;
+  /**
+   * clear_checked that was sent but not answered when "Ongedaan maken" was tapped: these ids are
+   * shown again at once, and restored on the server only if this very clear removed them.
+   */
+  restoreOnAck?: Uuid[];
+  /**
+   * Inverse rows queued when an undone add/clear is answered: they are ordered (sent and simulated)
+   * right after the outbox row with this seq, before any edit the user made in the meantime.
+   */
+  orderAfter?: number;
 }
 
 /** One outbox row, in memory (mirrors the `outbox` table). */

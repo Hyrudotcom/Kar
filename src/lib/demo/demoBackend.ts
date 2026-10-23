@@ -55,6 +55,8 @@ export class DemoWorld {
   readonly users = new Map<Uuid, AuthUser>();
   readonly memberships = new Map<Uuid, Membership>();
   readonly invites: Invite[] = [];
+  /** accept_invite of a user alone in their household: from -> to, per user (merged_from). */
+  readonly merges: { userId: Uuid; from: Uuid; to: Uuid }[] = [];
   readonly optIn = new Map<Uuid, boolean>();
   overrides: PriceMatchOverride[] = [];
   currentUser: AuthUser | null = null;
@@ -116,6 +118,12 @@ export class DemoWorld {
     }
     if (rest.length === 0) this.revokeInvites(m.householdId);
     return { householdId: m.householdId, deleted: rest.length === 0, newOwner };
+  }
+
+  /** Like accept_invite for a user alone in `from`: earlier merges into `from` now lead to `to` too. */
+  recordMerge(userId: Uuid, from: Uuid, to: Uuid): void {
+    for (const m of this.merges) if (m.userId === userId && m.to === from) m.to = to;
+    this.merges.push({ userId, from, to });
   }
 
   revokeInvites(householdId: Uuid): boolean {
@@ -243,8 +251,9 @@ export function createDemoBackend(opts: DemoBackendOptions = {}): DemoBackend {
         const u = me();
         if (!u) return { ok: false as const, error: 'not_authenticated' as const };
         const m = world.memberships.get(u.id);
-        if (!m) return { ok: true as const, household: null, role: null, members: [] };
-        return { ok: true as const, household: world.householdRow(m.householdId), role: m.role, members: world.membersOf(m.householdId) };
+        if (!m) return { ok: true as const, household: null, role: null, members: [], merged_from: [] };
+        const merged_from = world.merges.filter((x) => x.userId === u.id && x.to === m.householdId).map((x) => x.from);
+        return { ok: true as const, household: world.householdRow(m.householdId), role: m.role, members: world.membersOf(m.householdId), merged_from };
       }),
     createHousehold: (name = 'Thuis') =>
       online(() => {
@@ -290,6 +299,7 @@ export function createDemoBackend(opts: DemoBackendOptions = {}): DemoBackend {
             world.addItemsAs(u.id, p.household_id, openItems.map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit, note: i.note })));
             moved = openItems.length;
             deleted = current.householdId;
+            world.recordMerge(u.id, current.householdId, p.household_id);
           } else {
             left = current.householdId;
           }

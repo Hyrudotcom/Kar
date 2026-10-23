@@ -69,6 +69,28 @@ d('engine x real Postgres RPCs', () => {
     return { hh, a, b, anna: await device(a, hh, clock), bram: await device(b, hh, clock) };
   }
 
+  test('round 4: undo of an add whose response was lost, then the same item again: the re-add stays', async () => {
+    const { hh, a, b } = await sharedHousehold();
+    const clock = new FakeClock();
+    const chaos = new ChaosTransport(new PgSyncTransport(pool, a));
+    const db = await new BetterSqliteFactory(tempDir()).open(a);
+    const engine = createSyncEngine({ db, transport: chaos, connectivity: new ManualConnectivity(true), userId: a, householdId: hh, clock, uuid }, { random: () => 0.5 });
+    await engine.start();
+    chaos.loseNextResponses(1);
+    const first = await engine.addItem({ name: 'Melk', quantity: 1, unit: 'stuk' });
+    await engine.syncNow();
+    await engine.undo(first.undo);
+    await engine.addItem({ name: 'Melk', quantity: 2, unit: 'stuk' });
+    for (let i = 0; i < 4; i++) {
+      await clock.advance(120_000);
+      await engine.syncNow();
+    }
+    const bram = await device(b, hh, clock);
+    expect(bram.names()).toEqual(['Melk:2']);
+    expect(engine.getSnapshot().open.map((i) => `${i.name}:${i.quantity}`)).toEqual(['Melk:2']);
+    await engine.stop();
+  });
+
   test('offline adds on two devices dedupe into one row with the summed quantity', async () => {
     const { anna, bram } = await sharedHousehold();
     anna.offline();
