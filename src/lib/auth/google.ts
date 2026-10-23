@@ -7,13 +7,27 @@ import * as Google from 'expo-auth-session/providers/google';
 import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { env } from '../env';
 import type { IdTokenOutcome } from './apple';
 
 WebBrowser.maybeCompleteAuthSession();
 
-export const isGoogleConfigured = (): boolean => !!(env.googleIosClientId || env.googleAndroidClientId || env.googleWebClientId);
+type GoogleIds = Pick<typeof env, 'googleIosClientId' | 'googleAndroidClientId' | 'googleWebClientId'>;
+
+/**
+ * The client id expo-auth-session uses on this platform (iOS id on iOS, Android id on Android, web id
+ * elsewhere). Its Google provider throws when that one is missing, so the button is only offered
+ * when the CURRENT platform's id is set; ids of other platforms do not count.
+ */
+export function googleClientIdFor(os: string, ids: GoogleIds = env): string {
+  if (os === 'ios') return ids.googleIosClientId;
+  if (os === 'android') return ids.googleAndroidClientId;
+  return ids.googleWebClientId;
+}
+
+export const isGoogleConfigured = (os: string = Platform.OS, ids: GoogleIds = env): boolean => googleClientIdFor(os, ids).length > 0;
 
 function useNonce(): { raw: string; hashed: string } | null {
   const [nonce, setNonce] = useState<{ raw: string; hashed: string } | null>(null);

@@ -77,9 +77,6 @@ function spy(user: TestUser, hhA: Uuid, foreignUserId: Uuid) {
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'list_items' }, (p) => events.push(`list_items(any):${p.eventType}`))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'households', filter: `id=eq.${hhA}` }, (p) => events.push(`households:${p.eventType}`))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'household_members', filter: `household_id=eq.${hhA}` }, (p) =>
-        events.push(`household_members:${p.eventType}`),
-      )
       .subscribe((s) => (statuses.changes = s)),
   );
   ch.push(
@@ -241,6 +238,12 @@ describe('(d) household separation', () => {
     await settle([w.annaDevice]);
     await sleep(2_000);
     expect(bramSpy.events.slice(before)).toEqual([]);
+    expect(eveSpy.events).toEqual([]);
+
+    // Hard deletes (tombstone purge, household deletion) are not RLS-filtered by Realtime, so the
+    // publication sends no deletes at all: Eve's unfiltered feeds stay quiet.
+    await db().query('delete from public.list_items where id = $1', [w.itemA]);
+    await sleep(2_000);
     expect(eveSpy.events).toEqual([]);
     await eveSpy.close();
     await bramSpy.close();

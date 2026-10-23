@@ -226,7 +226,7 @@ describe('idempotent replay', () => {
     expect(stored).toEqual([{ user_id: H.owner }]);
   });
 
-  test('unexpected errors -> retry, not stored, and a later replay applies it', async () => {
+  test('unexpected errors -> retry, not stored, nothing after it applied, and a later replay applies both', async () => {
     const H = await createHousehold();
     const item = await addItem(H.owner, H.hid, 'Zout');
     const m = mutation(H.hid, 'increment_quantity', { item_id: item, delta: 1 });
@@ -243,16 +243,20 @@ describe('idempotent replay', () => {
       const res = await c.query(`select public.apply_mutations($1::jsonb) as r`, [JSON.stringify({ household_id: H.hid, mutations: [m, other] })]);
       const r = res.rows[0].r;
       expect(r.results[0]).toEqual({ id: m.id, status: 'retry' });
-      expect(r.results[1].status).toBe('applied');
+      // A later mutation may depend on the retried one (same name after a delete/rename): not applied.
+      expect(r.results[1]).toEqual({ id: other.id, status: 'retry' });
+      const olie = await c.query(`select count(*)::int as n from public.list_items where household_id = $1 and name = 'Olie'`, [H.hid]);
+      expect(olie.rows[0].n).toBe(0);
       await c.query('reset role');
       const stored = await c.query(`select id from private.mutations where id = any($1::uuid[])`, [[m.id, other.id]]);
-      expect(stored.rows.map((x) => x.id)).toEqual([other.id]);
+      expect(stored.rows).toEqual([]);
     } finally {
       await c.query('rollback');
       c.release();
     }
-    const again = await apply(H.owner, H.hid, [m]);
+    const again = await apply(H.owner, H.hid, [m, other]);
     expect(again.results[0]).toMatchObject({ status: 'applied', item_id: item });
+    expect(again.results[1]).toMatchObject({ status: 'applied' });
     expect((await itemRow(item)).quantity).toBe('2.000');
   });
 });

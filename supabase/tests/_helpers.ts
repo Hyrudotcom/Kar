@@ -17,8 +17,10 @@ export const pool = new Pool({ connectionString: DB_URL, max: 10 });
 export const uuid = (): string => randomUUID();
 
 export interface RequestOptions {
-  /** Value for the x-forwarded-for request header (rate limiting per IP). */
+  /** Client IP as the edge proxy reports it (cf-connecting-ip), for rate limiting per IP. */
   ip?: string;
+  /** Raw request headers (overrides ip). */
+  headers?: Record<string, string>;
 }
 
 /** Run fn inside one transaction as `uid` (authenticated) or, with null, as anon. Commits on success. */
@@ -29,7 +31,7 @@ export async function asUser<T>(uid: string | null, fn: (c: PoolClient) => Promi
     const claims = uid ? { sub: uid, role: 'authenticated', aud: 'authenticated' } : { role: 'anon' };
     await c.query(`select set_config('request.jwt.claims', $1, true), set_config('request.headers', $2, true)`, [
       JSON.stringify(claims),
-      JSON.stringify(opts.ip ? { 'x-forwarded-for': `${opts.ip}, 10.0.0.1` } : {}),
+      JSON.stringify(opts.headers ?? (opts.ip ? { 'cf-connecting-ip': opts.ip } : {})),
     ]);
     await c.query(uid ? 'set local role authenticated' : 'set local role anon');
     const out = await fn(c);

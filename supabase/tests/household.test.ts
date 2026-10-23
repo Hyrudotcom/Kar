@@ -18,6 +18,7 @@ import {
 } from './_helpers';
 
 afterAll(closePool);
+beforeAll(() => admin(`delete from private.invite_attempts`));
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const randomCode = () => Array.from({ length: 6 }, () => ALPHABET[Math.floor(Math.random() * 32)]).join('');
@@ -234,6 +235,41 @@ describe('preview_invite / accept_invite', () => {
     }
     const u = await createUser();
     expect(await rpc(u, 'preview_invite', { p_code: code })).toEqual({ ok: false, error: 'rate_limited' });
+  });
+
+  test('x-forwarded-for is not an IP (the client sets it); only cf-connecting-ip counts', async () => {
+    const u = await createUser();
+    expect((await rpc(u, 'preview_invite', { p_code: randomCode() }, { headers: { 'x-forwarded-for': '203.0.113.77' } })).error).toBe('invalid_code');
+    expect((await rpc(u, 'preview_invite', { p_code: randomCode() }, { headers: { 'cf-connecting-ip': '203.0.113.78', 'x-forwarded-for': '1.2.3.4' } })).error).toBe('invalid_code');
+    const logged = await admin(`select ip from private.invite_attempts where user_id = $1 order by id`, [u]);
+    expect(logged.map((x) => x.ip)).toEqual([null, '203.0.113.78']);
+  });
+
+  test('rate limit per account: 30 failed lookups per day, whatever the IP', async () => {
+    const u = await createUser();
+    await admin(
+      `insert into private.invite_attempts (user_id, ip, code, success, at)
+       select $1, '198.51.100.' || g, 'QQQQQ' || g, false, now() - interval '2 hours' from generate_series(1, 30) g`,
+      [u],
+    );
+    expect(await rpc(u, 'preview_invite', { p_code: randomCode() }, { ip: '203.0.113.90' })).toEqual({ ok: false, error: 'rate_limited' });
+    await admin(`update private.invite_attempts set at = now() - interval '25 hours' where user_id = $1`, [u]);
+    expect((await rpc(u, 'preview_invite', { p_code: randomCode() }, { ip: '203.0.113.90' })).error).toBe('invalid_code');
+  });
+
+  test('global ceiling: 200 failed lookups of unknown codes per 10 minutes, across accounts and IPs', async () => {
+    try {
+      await admin(
+        `insert into private.invite_attempts (user_id, ip, code, success)
+         select gen_random_uuid(), null, 'GLOBALTEST', false from generate_series(1, 200)`,
+      );
+      const u = await createUser();
+      expect(await rpc(u, 'preview_invite', { p_code: randomCode() })).toEqual({ ok: false, error: 'rate_limited' });
+    } finally {
+      await admin(`delete from private.invite_attempts where code = 'GLOBALTEST'`);
+    }
+    const u = await createUser();
+    expect((await rpc(u, 'preview_invite', { p_code: randomCode() })).error).toBe('invalid_code');
   });
 
   test('household block: 20 failed attempts on its expired/revoked codes block joining it for the hour', async () => {

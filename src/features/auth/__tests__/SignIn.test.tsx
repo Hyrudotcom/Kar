@@ -1,6 +1,9 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 
+import { Linking } from 'react-native';
+
 import { KV_KEYS } from '@/src/lib/backend/types';
+import { LEGAL_URLS } from '@/src/lib/legal';
 
 import { flush, makeBackend, renderApp } from '../../__tests__/helpers';
 import { useSession } from '../../session/SessionProvider';
@@ -29,8 +32,40 @@ describe('Inloggen', () => {
     expect(screen.getByLabelText('Doorgaan met Google')).toBeTruthy();
     expect(screen.getByText('E-mailadres')).toBeTruthy();
     expect(screen.getByLabelText('Stuur code')).toBeTruthy();
-    expect(screen.getByText('Door verder te gaan ga je akkoord met de voorwaarden.')).toBeTruthy();
+    expect(screen.getByText('Door verder te gaan ga je akkoord met de voorwaarden en het privacybeleid.')).toBeTruthy();
     expect(screen.getByLabelText('Ik heb een uitnodigingscode')).toBeTruthy();
+  });
+
+  it('D-02: terms and privacy policy are links that open before an account exists', async () => {
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    await setup();
+    await act(async () => fireEvent.press(screen.getByLabelText('Voorwaarden')));
+    await act(async () => fireEvent.press(screen.getByLabelText('Privacybeleid')));
+    expect(open.mock.calls.map((c) => c[0])).toEqual([LEGAL_URLS.terms, LEGAL_URLS.privacy]);
+    expect(screen.getByLabelText('Voorwaarden').props.accessibilityRole).toBe('link');
+    open.mockRestore();
+  });
+
+  it('keeps showing progress after a correct code while the household loads', async () => {
+    const backend = await setup();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const create = backend.households.createHousehold;
+    backend.households.createHousehold = async (name) => {
+      await gate;
+      return create(name);
+    };
+    await act(async () => fireEvent.changeText(screen.getByTestId('email'), 'jan@voorbeeld.nl'));
+    await act(async () => fireEvent.press(screen.getByLabelText('Stuur code')));
+    await screen.findByText('Typ de code uit je mail');
+    await act(async () => fireEvent.changeText(screen.getByTestId('otp'), '123456'));
+    await flush(20);
+    // Signed in, household still loading: the screen is busy, not idle with six filled cells.
+    expect(backend.world.currentUser?.email).toBe('jan@voorbeeld.nl');
+    expect(screen.getByLabelText('Bezig met inloggen')).toBeTruthy();
+    expect(screen.getByLabelText('Ander e-mailadres').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByText('Typ de code uit je mail')).toBeNull());
   });
 
   it('validates the e-mail address', async () => {

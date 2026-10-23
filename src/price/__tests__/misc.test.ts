@@ -18,6 +18,7 @@ import {
 } from '../format';
 import { PRICE_PROVIDERS, providerAvailability, validateProviderObservation, type PriceProvider, type ProviderObservation } from '../provider';
 import { emptyDataset, loadPriceDataset, PriceDataError, type PriceReadClient } from '../repository';
+import { makeQuery } from '../testing';
 import { DAY_MS, ageMs, priceStatusOf } from '../status';
 import { LICENSED, NOW, OPEN_PRICES, daysAgo, inDays, item } from './fixtures';
 
@@ -232,14 +233,27 @@ describe('GTIN', () => {
 });
 
 describe('repository', () => {
-  function client(tables: Record<string, unknown[]>, errors: Record<string, string> = {}) {
+  /** In-memory PostgREST: order + range + exact count, and responses cut at `maxRows` like max_rows. */
+  function client(tables: Record<string, unknown[]>, errors: Record<string, string> = {}, opts: { maxRows?: number; noCount?: boolean } = {}) {
     const calls: string[] = [];
     const c: PriceReadClient = {
       from(table) {
         return {
-          select(cols) {
+          select(cols, options) {
             calls.push(`${table}:${cols}`);
-            return Promise.resolve(errors[table] ? { data: null, error: { message: errors[table] } } : { data: tables[table] ?? [], error: null });
+            return makeQuery(async ({ order, from, to }) => {
+              if (errors[table]) return { data: null, error: { message: errors[table]! } };
+              const all = [...((tables[table] ?? []) as Record<string, unknown>[])].sort((a, b) => {
+                for (const col of order) {
+                  const x = String(a[col]);
+                  const y = String(b[col]);
+                  if (x !== y) return x < y ? -1 : 1;
+                }
+                return 0;
+              });
+              const end = Math.min(to + 1, from + (opts.maxRows ?? 1000));
+              return { data: all.slice(from, end), error: null, count: options?.count === 'exact' && !opts.noCount ? all.length : null };
+            });
           },
         };
       },
@@ -261,7 +275,7 @@ describe('repository', () => {
       catalog_items: [{ id: 'melk', display_name: 'Melk', aliases: ['melk'], reference_quantity: '1000.000', reference_unit: 'ml' }],
       products: [{ id: 'p', ean: '8712800012078', chain_id: null, name: 'Melk', brand: null, net_content: '1000.000', net_content_unit: 'ml' }],
       catalog_product_links: [{ catalog_item_id: 'melk', chain_id: 'ah', product_id: 'p', confidence: '0.95' }],
-      price_observations: [
+      price_observations_latest: [
         { id: 'o', product_id: 'p', chain_id: 'ah', source_id: LICENSED.id, price_cents: 119, unit_price_cents: null, unit_price_unit: null, promotion: null, promotion_valid_until: null, requires_loyalty: null, observed_at: null, ingested_at: daysAgo(0) },
       ],
       price_match_overrides: [
@@ -271,6 +285,7 @@ describe('repository', () => {
     });
     const ds = await loadPriceDataset(c, { householdId: 'h1' });
     expect(calls).toHaveLength(7);
+    expect(calls).toContain('price_observations_latest:id,product_id,chain_id,source_id,price_cents,unit_price_cents,unit_price_unit,promotion,promotion_valid_until,requires_loyalty,observed_at,ingested_at');
     expect(ds.catalog[0]!.reference_quantity).toBe(1000);
     expect(ds.products[0]!.net_content).toBe(1000);
     expect(ds.links[0]!.confidence).toBe(0.95);
@@ -279,7 +294,26 @@ describe('repository', () => {
   });
 
   test('errors are surfaced, never turned into an empty (cheaper) dataset', async () => {
-    const { c } = client({ price_sources: [LICENSED] }, { price_observations: 'permission denied' });
+    const { c } = client({ price_sources: [LICENSED] }, { price_observations_latest: 'permission denied' });
     await expect(loadPriceDataset(c)).rejects.toBeInstanceOf(PriceDataError);
+  });
+
+  /** Regression: a bare select() was cut at max_rows (1000) without an error. */
+  test('reads past 1000 rows page by page; a short read fails loudly instead of truncating', async () => {
+    const products = Array.from({ length: 2500 }, (_, i) => ({
+      id: `p${String(i).padStart(5, '0')}`, ean: '8712800012078', chain_id: null, name: `P${i}`, brand: null, net_content: 1000, net_content_unit: 'ml',
+    }));
+    const observations = products.map((p, i) => ({
+      id: `o${i}`, product_id: p.id, chain_id: 'ah', source_id: LICENSED.id, price_cents: 100 + i, unit_price_cents: null, unit_price_unit: null,
+      promotion: null, promotion_valid_until: null, requires_loyalty: false, observed_at: daysAgo(1), ingested_at: daysAgo(1),
+    }));
+    const tables = { price_sources: [LICENSED], chains: [{ id: 'ah', name: 'Albert Heijn' }], products, price_observations_latest: observations };
+    const ds = await loadPriceDataset(client(tables).c);
+    expect(ds.products).toHaveLength(2500);
+    expect(ds.observations).toHaveLength(2500);
+    expect(ds.observations.at(-1)!.price_cents).toBe(100 + 2499);
+    // A server that caps pages below our page size must not yield a silently short dataset.
+    await expect(loadPriceDataset(client(tables, {}, { maxRows: 500 }).c)).resolves.toBeTruthy();
+    await expect(loadPriceDataset(client(tables, {}, { noCount: true }).c)).rejects.toBeInstanceOf(PriceDataError);
   });
 });

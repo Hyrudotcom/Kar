@@ -2,6 +2,9 @@
 import type { AuthErrorCode, HouseholdCallError } from '@/src/lib/backend/types';
 
 export const OFFLINE_ONLINE_ONLY = 'Geen internet. Inloggen en lid worden kan alleen online.';
+export const SERVER_ERROR = 'Er ging iets mis. Probeer het opnieuw.';
+/** "Deel lijst" offline: the login/join sentence does not fit there. */
+export const OFFLINE_SHARE = 'Geen internet. Delen kan alleen online.';
 
 export function householdErrorText(error: HouseholdCallError | 'pending' | 'offline', householdName = 'Thuis'): string {
   switch (error) {
@@ -26,6 +29,8 @@ export function householdErrorText(error: HouseholdCallError | 'pending' | 'offl
       return 'Deze naam kan niet. Gebruik 1 tot 60 tekens.';
     case 'pending':
       return 'Je wijzigingen worden nog verstuurd. Probeer het zo opnieuw.';
+    case 'server':
+      return SERVER_ERROR;
     default:
       return 'Er ging iets mis. Probeer het opnieuw.';
   }

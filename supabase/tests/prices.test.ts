@@ -7,6 +7,7 @@ import { compareBaskets } from '@/src/price/engine';
 import { isValidGtin } from '@/src/price/ean';
 import { listFingerprint } from '@/src/price/fingerprint';
 import { loadPriceDataset, type PriceReadClient } from '@/src/price/repository';
+import { makeQuery } from '@/src/price/testing';
 import { admin, asRollback, asUser, closePool, createHousehold, createUserWithHousehold, expectDenied, pool, uuid } from './_helpers';
 
 afterAll(closePool);
@@ -327,28 +328,103 @@ describe('end to end with fixture prices (rolled back)', () => {
   });
 });
 
-/** PriceReadClient over a pg connection that mimics PostgREST output (timestamps as ISO strings). */
-function pgReadClient(c: PoolClient): PriceReadClient {
+describe('price_observations_latest (rolled back)', () => {
+  test('one row per product and chain: the newest usable one; more than 1000 rows load in pages', async () => {
+    const { uid } = await createUserWithHousehold();
+    const c = await pool.connect();
+    try {
+      await c.query('begin');
+      await c.query('set local role service_role');
+      await c.query(`insert into public.price_sources (id, name, licence, channel, verified_for_consumer_display) values ('test_feed', 'Testfeed', 'test', 'webshop', true), ('test_raw', 'Ruw', 'test', 'webshop', false)`);
+      await c.query(`insert into public.catalog_items (id, display_name, aliases, reference_quantity, reference_unit) values ('melk-view', 'Melk', '{"melk view"}', 1000, 'ml')`);
+      const eans = Array.from({ length: 1100 }, (_, i) => gtin(`21${i.toString().padStart(10, '0')}`));
+      const ids: string[] = (
+        await c.query(
+          `insert into public.products (ean, name, net_content, net_content_unit) select e, 'P ' || e, 1000, 'ml' from unnest($1::text[]) e returning id`,
+          [eans],
+        )
+      ).rows.map((r) => r.id);
+      await c.query(
+        `insert into public.catalog_product_links (catalog_item_id, chain_id, product_id, confidence, approved_by) select 'melk-view', 'ah', p, 1, 'test' from unnest($1::uuid[]) p`,
+        [ids],
+      );
+      // Every product: an old and a new price at AH.
+      await c.query(
+        `insert into public.price_observations (product_id, chain_id, source_id, price_cents, observed_at)
+         select p, 'ah', 'test_feed', 200, now() - interval '3 days' from unnest($1::uuid[]) p
+         union all select p, 'ah', 'test_feed', 100, now() - interval '1 day' from unnest($1::uuid[]) p`,
+        [ids],
+      );
+      const first = ids[0]!;
+      const obs = `insert into public.price_observations (product_id, chain_id, source_id, price_cents, observed_at, requires_loyalty) values ($1, $2, $3, $4, now() - $5::interval, $6)`;
+      await c.query(obs, [first, 'ah', 'test_feed', 50, '1 hour', true]); // newer, but loyalty only
+      await c.query(obs, [first, 'ah', 'test_raw', 40, '1 hour', false]); // newer, but not verified
+      await c.query(obs, [first, 'jumbo', 'test_feed', 99, '1 hour', false]); // no link at Jumbo
+      await c.query(obs, [ids[1]!, 'ah', 'test_feed', 30, '1 minute', false]); // newest: used
+      await c.query(`delete from public.price_observations where product_id = $1 and observed_at > now() - interval '2 days'`, [ids[2]!]);
+      await c.query(`update public.price_observations set observed_at = now() - interval '20 days' where product_id = $1`, [ids[2]!]);
+      await c.query('reset role');
+      await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: uid, role: 'authenticated' })]);
+      await c.query('set local role authenticated');
+
+      const rows = (await c.query(`select product_id, chain_id, price_cents from public.price_observations_latest`)).rows;
+      expect(rows).toHaveLength(1099); // ids[2] only has a 20 day old price
+      const byProduct = new Map(rows.map((r) => [r.product_id, r]));
+      expect(byProduct.get(first)).toMatchObject({ chain_id: 'ah', price_cents: 100 });
+      expect(byProduct.get(ids[1]!)).toMatchObject({ price_cents: 30 });
+      expect(byProduct.has(ids[2]!)).toBe(false);
+
+      const data = await loadPriceDataset(pgReadClient(c));
+      expect(data.observations).toHaveLength(1099);
+      expect(data.products.length).toBeGreaterThanOrEqual(1100);
+    } finally {
+      await c.query('rollback').catch(() => undefined);
+      c.release();
+    }
+  });
+
+  test('anon cannot read the view', async () => {
+    await asUser(null, async (c) => {
+      await expect(c.query('select 1 from public.price_observations_latest limit 1')).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+});
+
+/** PriceReadClient over a pg connection that mimics PostgREST output (timestamps as ISO strings, max_rows cut). */
+function pgReadClient(c: PoolClient, maxRows = 1000): PriceReadClient {
   let queue: Promise<unknown> = Promise.resolve(); // one pg connection runs one query at a time
   return {
     from(table) {
       return {
-        select(columns) {
-          const run = async () => {
-            if (!/^[a-z_]+$/.test(table) || !/^[a-z_,]+$/.test(columns)) throw new Error('bad identifier');
-            try {
-              const r = await c.query(`select ${columns} from public.${table}`);
-              const data = r.rows.map((row) =>
-                Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])),
-              );
-              return { data, error: null };
-            } catch (e) {
-              return { data: null, error: { message: (e as Error).message } };
-            }
-          };
-          const p = queue.then(run, run);
-          queue = p;
-          return p;
+        select(columns, options) {
+          return makeQuery((spec) => {
+            const run = async () => {
+              const ident = /^[a-z_]+$/;
+              if (!ident.test(table) || !/^[a-z_,]+$/.test(columns) || !spec.order.every((o) => ident.test(o))) throw new Error('bad identifier');
+              try {
+                const order = spec.order.length ? ` order by ${spec.order.join(', ')}` : '';
+                const limit = Math.min(spec.to - spec.from + 1, maxRows);
+                const r = await c.query(`select ${columns}, count(*) over () as __total from public.${table}${order} limit $1 offset $2`, [limit, spec.from]);
+                const data = r.rows.map((row) =>
+                  Object.fromEntries(
+                    Object.entries(row)
+                      .filter(([k]) => k !== '__total')
+                      .map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v]),
+                  ),
+                );
+                let count: number | null = null;
+                if (options?.count === 'exact') {
+                  count = r.rows.length ? Number(r.rows[0].__total) : Number((await c.query(`select count(*)::int as n from public.${table}`)).rows[0].n);
+                }
+                return { data, error: null, count };
+              } catch (e) {
+                return { data: null, error: { message: (e as Error).message } };
+              }
+            };
+            const p = queue.then(run, run);
+            queue = p;
+            return p;
+          });
         },
       };
     },

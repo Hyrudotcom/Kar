@@ -135,7 +135,6 @@ export const compareBaskets: CompareBaskets = (input) => {
 
   // ---- latest eligible observation per (product, chain) -------------------------------------------
   const latest = new Map<string, ObsPick>(); // key product|chain
-  const coveredChains = new Set<string>();
   for (const o of data.observations) {
     if (!sources.has(o.source_id)) continue; // unlicensed or wrong channel
     if (!chains.has(o.chain_id)) continue;
@@ -151,14 +150,6 @@ export const compareBaskets: CompareBaskets = (input) => {
     const prev = latest.get(key);
     if (!prev || isNewer(pick, prev)) latest.set(key, pick);
   }
-  for (const [key, pick] of latest) {
-    if (pick.status !== 'unknown') coveredChains.add(key.slice(key.lastIndexOf('|') + 1));
-  }
-
-  // ---- state: unavailable (v1 today) / empty --------------------------------------------------------
-  if (coveredChains.size < PRICE_AGE_RULES.minVerifiedChains) return { ...base, state: 'unavailable' };
-  if (compared.length === 0) return { ...base, state: 'empty' };
-
   // ---- catalog alias index (an alias claimed by two catalog items is ambiguous -> no match) -------
   const aliasIndex = new Map<string, CatalogItem | null>();
   for (const c of data.catalog) {
@@ -185,6 +176,19 @@ export const compareBaskets: CompareBaskets = (input) => {
     if (!list.some((p) => p.id === product.id)) list.push(product);
     links.set(key, list);
   }
+
+  // ---- coverage: a chain counts only with a VERIFIED (<= 7 d) price for a product reachable through
+  // a confident catalog link (design-spec 4.5: at least 2 verified chains). Stale-only prices or
+  // prices of unlinked products never switch the comparison on.
+  const coveredChains = new Set<string>();
+  for (const [key, list] of links) {
+    const chainId = key.slice(key.lastIndexOf('|') + 1);
+    if (list.some((p) => latest.get(`${p.id}|${chainId}`)?.status === 'verified')) coveredChains.add(chainId);
+  }
+
+  // ---- state: unavailable (v1 today) / empty --------------------------------------------------------
+  if (coveredChains.size < PRICE_AGE_RULES.minVerifiedChains) return { ...base, state: 'unavailable' };
+  if (compared.length === 0) return { ...base, state: 'empty' };
 
   const overridden = new Set(data.overrides.map((o) => `${o.catalog_item_id}|${o.chain_id}`));
 

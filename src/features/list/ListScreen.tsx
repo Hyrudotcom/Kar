@@ -162,7 +162,8 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
         return <CheckedHeader count={stable.checked.length} expanded={expanded} onToggle={() => setExpanded((e) => !e)} onClear={() => void clearChecked()} />;
       }
       if (row.kind === 'allChecked') {
-        return <EmptyState title="Alles afgevinkt" body="Klaar met boodschappen?" action={{ label: 'Wissen', onPress: () => void clearChecked() }} testID="all-checked" />;
+        // One "Wissen" only: the checked header right below carries it (design-spec 3).
+        return <EmptyState title="Alles afgevinkt" body="Klaar met boodschappen?" testID="all-checked" />;
       }
       return (
         <ListRow

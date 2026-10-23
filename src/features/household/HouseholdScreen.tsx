@@ -16,7 +16,7 @@ import { sizes, spacing } from '@/src/ui/tokens';
 import { useSnackbar } from '../feedback/SnackbarProvider';
 import { usePrices } from '../route/PriceContext';
 import { useBackend } from '../session/BackendContext';
-import { changesText, householdErrorText } from '../session/copy';
+import { changesText, householdErrorText, OFFLINE_SHARE } from '../session/copy';
 import { useReadySession, type ActionResult } from '../session/SessionProvider';
 
 export function initials(name: string): string {
@@ -31,7 +31,8 @@ type Confirm =
   | { kind: 'leave' }
   | { kind: 'leavePending'; pending: number }
   | { kind: 'signOutPending'; pending: number }
-  | { kind: 'deleteAccount' };
+  | { kind: 'deleteAccount' }
+  | { kind: 'replaceCode' };
 
 export function HouseholdScreen() {
   const c = useColors();
@@ -69,7 +70,7 @@ export function HouseholdScreen() {
     const r = await backend.households.createInvite(household.id, replace);
     setSharing(false);
     if (!r.ok) {
-      snackbar.show({ message: householdErrorText(r.error, household.name) });
+      snackbar.show({ message: r.error === 'network' ? OFFLINE_SHARE : householdErrorText(r.error, household.name) });
       return;
     }
     setCode(r.code);
@@ -151,6 +152,10 @@ export function HouseholdScreen() {
         case 'deleteAccount':
           finish(await session.deleteAccount());
           break;
+        case 'replaceCode':
+          setConfirm(null);
+          await share(true);
+          break;
       }
     } finally {
       setBusy(false);
@@ -176,6 +181,8 @@ export function HouseholdScreen() {
         return { title: `Je hebt ${changesText(confirm.pending)} die nog niet verstuurd zijn.`, confirmLabel: 'Toch verlaten' };
       case 'signOutPending':
         return { title: `Je hebt ${changesText(confirm.pending)} die nog niet verstuurd zijn.`, confirmLabel: 'Toch uitloggen' };
+      case 'replaceCode':
+        return { title: 'Code vervangen?', body: 'Links en codes die je al hebt gedeeld werken dan niet meer.', confirmLabel: 'Code vervangen' };
       case 'deleteAccount':
         return {
           title: 'Account verwijderen?',
@@ -198,16 +205,22 @@ export function HouseholdScreen() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.block}>
           <PrimaryButton label="Deel lijst" onPress={() => void share(false)} busy={sharing} />
-          {code || isOwner ? (
+          {code ? (
             <View style={styles.codeRow}>
-              {code ? (
-                <AppText variant="footnote" color="textMuted" style={styles.flex} selectable testID="invite-code">
-                  {`Code: ${code}`}
-                </AppText>
-              ) : (
-                <View style={styles.flex} />
-              )}
-              {isOwner ? <TextButton label="Code vervangen" onPress={() => void share(true)} disabled={sharing} /> : null}
+              <AppText variant="footnote" color="textMuted" style={styles.flex} selectable testID="invite-code">
+                {`Code: ${code}`}
+              </AppText>
+              {isOwner ? (
+                <TextButton
+                  label="Code vervangen"
+                  tone="muted"
+                  onPress={() => {
+                    setConfirmError(null);
+                    setConfirm({ kind: 'replaceCode' });
+                  }}
+                  disabled={sharing}
+                />
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -215,6 +228,7 @@ export function HouseholdScreen() {
         <View style={styles.block}>
           {isOwner ? (
             <TextField
+              label="Naam"
               accessibilityLabel="Naam van het huishouden"
               value={name}
               onChangeText={(t) => {
@@ -272,7 +286,7 @@ export function HouseholdScreen() {
           <AppText variant="footnote" color="textMuted" testID="signed-in-as">
             {`Ingelogd als ${user.email ?? user.displayName}`}
           </AppText>
-          <TextButton label="Uitloggen" tone="text" onPress={() => void signOut()} />
+          <TextButton label="Uitloggen" onPress={() => void signOut()} />
           <TextButton
             label="Huishouden verlaten"
             tone="danger"
@@ -289,7 +303,7 @@ export function HouseholdScreen() {
           ) : null}
           <TextButton
             label="Account verwijderen"
-            tone="danger"
+            tone="muted"
             onPress={() => {
               setConfirmError(null);
               setConfirm({ kind: 'deleteAccount' });
@@ -302,7 +316,7 @@ export function HouseholdScreen() {
         title={confirmProps?.title ?? ''}
         body={confirmProps?.body}
         confirmLabel={confirmProps?.confirmLabel ?? ''}
-        danger
+        danger={confirm?.kind !== 'replaceCode'}
         busy={busy}
         error={confirmError}
         onConfirm={() => void runConfirm()}

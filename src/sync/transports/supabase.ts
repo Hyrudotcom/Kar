@@ -154,11 +154,8 @@ export class SupabaseSyncTransport implements SyncTransport {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'households', filter: `id=eq.${householdId}` }, () =>
         onNudge('household'),
       )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'household_members', filter: `household_id=eq.${householdId}` },
-        () => onNudge('membership'),
-      )
+      // No household_members changes: DELETE events are not RLS-filtered, so that table is not
+      // published. Membership loss arrives on the private user topic below.
       // (Re)subscribed after a dropped socket: events may have been missed, so catch up.
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') onNudge('items');

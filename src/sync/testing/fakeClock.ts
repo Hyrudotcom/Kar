@@ -24,6 +24,15 @@ export class FakeClock implements Clock {
     this.timers.delete(handle as number);
   }
 
+  /**
+   * Sets the wall clock (now()) by `ms` without touching how long pending timers still wait, like a
+   * user changing the phone's time: timers are monotonic, Date.now() is not.
+   */
+  shiftWall(ms: number): void {
+    this.t += ms;
+    for (const tm of this.timers.values()) tm.at += ms;
+  }
+
   pendingTimers(): number {
     return this.timers.size;
   }

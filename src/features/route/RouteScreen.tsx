@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { BasketLine, BasketRequestItem, ComparisonResult, PriceSource, StoreBasket, VisibleItem } from '@/src/contracts';
 import {
   compareBaskets,
+  DAY_MS,
   formatAge,
   formatBasketTotal,
   formatCents,
@@ -22,9 +23,11 @@ import {
   formatPackages,
   formatResultHeader,
   formatStoreLabel,
+  isEligibleSource,
   listFingerprint,
   PRICE_COPY,
 } from '@/src/price';
+import { PRICE_AGE_RULES } from '@/src/contracts';
 import { useList, useSyncEngine } from '@/src/sync/hooks';
 import {
   AppText,
@@ -34,9 +37,9 @@ import {
   EmptyState,
   IconButton,
   InfoIcon,
-  PrimaryButton,
   QuestionIcon,
   ReceiptIcon,
+  ScreenHeader,
   SkeletonRows,
   TextButton,
   useColors,
@@ -44,7 +47,7 @@ import {
 import { sizes, spacing } from '@/src/ui/tokens';
 
 import type { AppEngine } from '@/src/lib/backend/types';
-import { formatClock } from '../list/time';
+import { formatWhen } from '../list/time';
 import { usePrices } from './PriceContext';
 
 export const UNAVAILABLE_BODY = `We vergelijken pas als we betrouwbare prijzen hebben. ${PRICE_COPY.unavailableBody}`;
@@ -90,22 +93,37 @@ export function RouteScreen() {
 
 function Title({ onInfo }: { onInfo?: () => void }) {
   return (
-    <View style={styles.titleRow}>
-      <View style={styles.titleText}>
-        <AppText variant="body" accessibilityRole="header" style={styles.strong}>
-          {PRICE_COPY.title}
-        </AppText>
-        <AppText variant="footnote" color="textMuted">
-          {PRICE_COPY.subtitle}
-        </AppText>
-      </View>
-      {onInfo ? (
-        <IconButton label="Hoe we vergelijken" onPress={onInfo} testID="route-info">
-          <InfoIcon size={22} color="textMuted" />
-        </IconButton>
-      ) : null}
-    </View>
+    <ScreenHeader
+      title={PRICE_COPY.title}
+      subtitle={PRICE_COPY.subtitle}
+      right={
+        onInfo ? (
+          <IconButton label="Hoe we vergelijken" onPress={onInfo} testID="route-info">
+            <InfoIcon size={22} color="textMuted" />
+          </IconButton>
+        ) : null
+      }
+    />
   );
+}
+
+/**
+ * A cached comparison (offline, rule 9) is shown only while it is still true: at most 12 h old, no
+ * price that has meanwhile passed 14 days (it would be unknown now), and no applied promotion that
+ * has ended. Otherwise the error state is shown instead of old totals and an old "Goedkoopste".
+ */
+export const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+export function isCachedComparisonUsable(result: ComparisonResult, computedAt: number, now: number): boolean {
+  const elapsed = now - computedAt;
+  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > CACHE_MAX_AGE_MS) return false;
+  for (const store of result.stores) {
+    for (const line of store.lines) {
+      if (line.status === 'unknown' || line.age_days === null) continue;
+      if (line.age_days * DAY_MS + elapsed > PRICE_AGE_RULES.staleMaxDays * DAY_MS) return false;
+      if (line.promotion_applied && line.promotion_valid_until && Date.parse(line.promotion_valid_until) < now) return false;
+    }
+  }
+  return true;
 }
 
 function RouteBody() {
@@ -162,7 +180,7 @@ function RouteBody() {
   }
 
   if (prices.status === 'error') {
-    if (cached && prices.optIn) {
+    if (cached && prices.optIn && isCachedComparisonUsable(cached.result, cached.computedAt, now)) {
       return (
         <ResultView
           result={cached.result}
@@ -198,15 +216,19 @@ function RouteBody() {
   }
 
   if (!prices.optIn) {
+    // Same empty-tab layout as the no-data state (D-15), saying what the tap does and which source.
+    const names = sources.filter(isEligibleSource).map((s) => s.name);
     return (
       <>
         <Title />
-        <View style={styles.optIn}>
-          <AppText variant="body" color="textMuted" align="center">
-            {PRICE_COPY.optInBody}
-          </AppText>
-          <PrimaryButton label={PRICE_COPY.optInButton} onPress={() => void prices.setOptIn(true)} />
-        </View>
+        <EmptyState
+          icon={<ReceiptIcon size={40} color="textMuted" />}
+          title="Vergelijk je lijst per winkel"
+          body={`We tellen per winkel je hele lijst op${names.length ? `, met prijzen van ${names.join(' en ')}` : ''}. ${PRICE_COPY.optInBody}`}
+          action={{ label: PRICE_COPY.optInButton, onPress: () => void prices.setOptIn(true) }}
+          actionStyle="primary"
+          testID="route-opt-in"
+        />
       </>
     );
   }
@@ -272,7 +294,7 @@ function ResultView({
         </AppText>
         {stale ? (
           <AppText variant="footnote" color="textMuted" style={styles.header}>
-            {stale.changed ? `Je lijst is gewijzigd sinds ${formatClock(stale.since)}` : `Van ${formatClock(stale.since)}`}
+            {stale.changed ? `Je lijst is gewijzigd sinds ${formatWhen(new Date(stale.since).toISOString())}` : `Van ${formatWhen(new Date(stale.since).toISOString())}`}
           </AppText>
         ) : null}
         {result.state === 'no_complete' ? (
@@ -330,7 +352,7 @@ function ResultView({
       <StoreSheet basket={store} onClose={() => setStoreId(null)} />
       <BottomSheet visible={infoOpen} onClose={onCloseInfo} title="Hoe we vergelijken" testID="route-info-sheet">
         <AppText variant="body">
-          {`We gebruiken ${used.map((s) => `${s.name} (${s.channel === 'webshop' ? 'webshopprijzen' : 'landelijke prijzen'})`).join(', ') || 'geverifieerde bronnen'}. Elke prijs heeft een datum. Voor elk item vergelijken we bij elke winkel hetzelfde soort product en dezelfde hoeveelheid. Ontbreekt een prijs, dan tellen we die niet als nul en noemen we de mand onvolledig. Statiegeld telt niet mee. Prijzen kunnen in de winkel afwijken.`}
+          {`We gebruiken ${used.map((s) => `${s.channel === 'webshop' ? 'webshopprijzen' : 'landelijke prijzen'} via ${s.name}`).join(', ') || 'geverifieerde bronnen'}. Elke prijs heeft een datum. Voor elk item vergelijken we bij elke winkel hetzelfde soort product en dezelfde hoeveelheid. Ontbreekt een prijs, dan tellen we die niet als nul en noemen we de mand onvolledig. Statiegeld telt niet mee. Prijzen kunnen in de winkel afwijken.`}
         </AppText>
       </BottomSheet>
     </>
@@ -388,6 +410,11 @@ function StoreSheet({ basket, onClose }: { basket: StoreBasket | null; onClose()
   return (
     <>
       <BottomSheet visible={!!basket && !line} onClose={onClose} title={basket?.chain_name} testID="store-sheet">
+        {basket ? (
+          <AppText variant="footnote" color="textMuted" testID="store-sheet-summary" style={styles.sheetSummary}>
+            {storeSummary(basket)}
+          </AppText>
+        ) : null}
         {basket?.lines.map((l) => (
           <LineRow key={l.list_item_id} line={l} onPress={l.catalog_item_id && (l.status !== 'unknown' || overridden(l)) ? () => setLine(l) : undefined} />
         ))}
@@ -416,6 +443,13 @@ function StoreSheet({ basket, onClose }: { basket: StoreBasket | null; onClose()
       </BottomSheet>
     </>
   );
+}
+
+/** Store sheet subtitle (D-14): "€4,59 · 2 van 2 prijzen · 1 verouderd" / "Onvolledig · 1 van 2 prijzen". */
+export function storeSummary(b: StoreBasket): string {
+  const total = formatBasketTotal(b);
+  if (!b.complete || total === null) return `${PRICE_COPY.incompleteHeader} · ${formatCoverage(b)}`;
+  return [total, formatCoverage(b), b.stale_count > 0 ? `${b.stale_count} verouderd` : null].filter(Boolean).join(' · ');
 }
 
 function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) {
@@ -473,10 +507,7 @@ function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) 
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: sizes.sideMargin, paddingRight: sizes.sideMargin - 12, paddingTop: spacing.sm, paddingBottom: spacing.sm },
-  titleText: { flex: 1, gap: 2 },
-  strong: { fontWeight: '600' },
-  optIn: { flex: 1, justifyContent: 'center', gap: spacing.lg, paddingHorizontal: sizes.sideMargin + spacing.sm },
+  sheetSummary: { marginBottom: spacing.xs },
   scroll: { paddingBottom: spacing.xxl * 3 },
   header: { paddingHorizontal: sizes.sideMargin, marginBottom: spacing.sm },
   noComplete: { marginTop: spacing.sm },
@@ -489,5 +520,5 @@ const styles = StyleSheet.create({
   line: { paddingTop: spacing.sm, gap: 2 },
   lineRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 32 },
   inline: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  lineDivider: { marginTop: spacing.sm },
+  lineDivider: { marginTop: spacing.sm, marginBottom: spacing.xs },
 });

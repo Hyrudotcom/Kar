@@ -9,11 +9,18 @@ const broadcasts = (uid: string) =>
     [`user:${uid}`],
   );
 
-test('list_items, households and household_members are in the supabase_realtime publication', async () => {
+test('list_items and households are in the supabase_realtime publication, household_members is not', async () => {
   const rows = await admin(
     `select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by 1`,
   );
-  expect(rows.map((r) => r.tablename)).toEqual(expect.arrayContaining(['household_members', 'households', 'list_items']));
+  const tables = rows.map((r) => r.tablename);
+  expect(tables).toEqual(expect.arrayContaining(['households', 'list_items']));
+  expect(tables).not.toContain('household_members');
+});
+
+test('the publication sends no deletes (Realtime does not RLS-filter DELETE events)', async () => {
+  const [p] = await admin(`select pubinsert, pubupdate, pubdelete, pubtruncate from pg_publication where pubname = 'supabase_realtime'`);
+  expect(p).toEqual({ pubinsert: true, pubupdate: true, pubdelete: false, pubtruncate: false });
 });
 
 test('remove_member sends a private membership_changed broadcast to the removed user', async () => {

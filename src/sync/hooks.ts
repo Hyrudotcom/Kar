@@ -55,11 +55,17 @@ export function useSyncStatus(engine?: SyncEngine | null): SyncStatus {
   return useSyncExternalStore(subscribe, get, get);
 }
 
-/** One visible item by id (open or checked), or undefined once it is gone (deleted elsewhere: F12). */
+/**
+ * One visible item by id (open or checked), or undefined once it is gone (deleted elsewhere: F12).
+ * Follows aliases: an add the server merged into another row is found under that row's id.
+ */
 export function useItem(itemId: string | null | undefined, engine?: SyncEngine | null): VisibleItem | undefined {
-  const snap = useList(engine);
+  const ctx = useContext(SyncEngineContext);
+  const e = engine === undefined ? ctx : engine;
+  const snap = useList(e);
   if (!itemId) return undefined;
-  return snap.open.find((i) => i.id === itemId) ?? snap.checked.find((i) => i.id === itemId);
+  const id = e ? e.resolveId(itemId) : itemId;
+  return snap.open.find((i) => i.id === id) ?? snap.checked.find((i) => i.id === id);
 }
 
 /** Suggestion history; refreshed whenever the list revision changes. */

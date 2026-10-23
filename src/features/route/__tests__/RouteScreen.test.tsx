@@ -1,10 +1,10 @@
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
 
-import type { PriceDataset } from '@/src/contracts';
+import type { ComparisonResult, PriceDataset } from '@/src/contracts';
 import { DatasetBuilder } from '@/src/price/__tests__/fixtures';
 
 import { flush, makeBackend, renderReady, signIn } from '../../__tests__/helpers';
-import { RouteScreen, speakCents, storeAccessibilityLabel } from '../RouteScreen';
+import { isCachedComparisonUsable, RouteScreen, speakCents, storeAccessibilityLabel } from '../RouteScreen';
 
 jest.mock('react-native-safe-area-context', () => require('../../__tests__/mocks').safeAreaMock());
 jest.mock('expo-router', () => ({ useRouter: () => require('../../__tests__/helpers').mockRouter }));
@@ -50,16 +50,50 @@ describe('Goedkoopste route', () => {
     expect(screen.queryByText(/€/)).toBeNull();
   });
 
-  it('price source unreachable: "Prijzen tijdelijk niet beschikbaar" with retry', async () => {
+  it('price source unreachable without any earlier comparison (v1, offline start): still the calm "Geen geverifieerde prijzen", no error, no button', async () => {
     await setup({ priceError: true }, [{ name: 'Melk' }]);
-    expect(await screen.findByText('Prijzen tijdelijk niet beschikbaar')).toBeTruthy();
-    expect(screen.getByText('Je lijst werkt gewoon.')).toBeTruthy();
-    expect(screen.getByLabelText('Opnieuw proberen')).toBeTruthy();
+    expect(await screen.findByText('Geen geverifieerde prijzen beschikbaar')).toBeTruthy();
+    expect(screen.queryByText('Prijzen tijdelijk niet beschikbaar')).toBeNull();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('a failed load is retried by itself when the connection comes back', async () => {
+    const backend = makeBackend({ priceDataset: fixture() });
+    const me = await signIn(backend);
+    const r = await backend.households.createHousehold();
+    if (!r.ok) throw new Error('hh');
+    backend.world.addItemsAs(me.id, r.household.id, [{ name: 'Melk' }]);
+    const load = backend.prices.loadDataset;
+    let fail = true;
+    backend.prices.loadDataset = async (id) => {
+      if (fail) throw new Error('unreachable');
+      return load(id);
+    };
+    await renderReady(<RouteScreen />, backend);
+    expect(await screen.findByText('Geen geverifieerde prijzen beschikbaar')).toBeTruthy();
+    fail = false;
+    await act(async () => {
+      backend.connectivity.set(false);
+      backend.connectivity.set(true);
+    });
+    await flush();
+    expect(await screen.findByLabelText('Prijzen vergelijken')).toBeTruthy();
+  });
+
+  it('cached comparisons are only reused while still true (age, 14-day rule, promotions)', () => {
+    const now = Date.now();
+    const result = { stores: [{ lines: [{ status: 'stale', age_days: 13, promotion_applied: false, promotion_valid_until: null }] }] } as unknown as ComparisonResult;
+    expect(isCachedComparisonUsable(result, now - 60_000, now)).toBe(true);
+    expect(isCachedComparisonUsable(result, now - 13 * 3_600_000, now)).toBe(false); // older than 12 h
+    expect(isCachedComparisonUsable(result, now - 2 * DAY + 1, now - DAY + 1)).toBe(false); // 13 d + elapsed > 14 d
+    const promo = { stores: [{ lines: [{ status: 'verified', age_days: 1, promotion_applied: true, promotion_valid_until: new Date(now - 1000).toISOString() }] }] } as unknown as ComparisonResult;
+    expect(isCachedComparisonUsable(promo, now - 60_000, now)).toBe(false);
   });
 
   it('with verified data: opt-in first, then only complete baskets are ranked and totalled', async () => {
     const backend = await setup({ priceDataset: fixture() }, [{ name: 'Melk', quantity: 2 }, { name: 'Brood' }]);
-    expect(await screen.findByText('Ontbrekende prijzen tonen we eerlijk.')).toBeTruthy();
+    expect(await screen.findByText('Vergelijk je lijst per winkel')).toBeTruthy();
+    expect(screen.getByText('We tellen per winkel je hele lijst op, met prijzen van Testfeed. Ontbrekende prijzen tonen we eerlijk.')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByLabelText('Prijzen vergelijken')));
     await flush();
     expect(backend.world.optIn.get(backend.world.currentUser!.id)).toBe(true);
@@ -83,6 +117,7 @@ describe('Goedkoopste route', () => {
     // Lines of the incomplete store: the unknown price is "Geen prijs", never €0,00.
     await act(async () => fireEvent.press(lidl));
     const sheet = screen.getByTestId('store-sheet');
+    expect(within(sheet).getByText('Onvolledig · 1 van 2 prijzen')).toBeTruthy(); // D-14
     expect(within(sheet).getByText('Geen prijs')).toBeTruthy();
     expect(within(sheet).queryByText('€0,00')).toBeNull();
     expect(within(sheet).getByText('€1,98')).toBeTruthy();

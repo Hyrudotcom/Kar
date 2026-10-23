@@ -121,10 +121,15 @@ export class DatasetBuilder {
     return this;
   }
 
-  /** Gives `chainIds` coverage with an unrelated, fresh product so the comparison is "available". */
+  /**
+   * Gives `chainIds` coverage with an unrelated, fresh, LINKED product so the comparison is
+   * "available" (coverage needs a verified price reachable through a catalog link).
+   */
   cover(...chainIds: string[]): this {
+    if (!this.data.catalog.some((c) => c.id === 'cover-item')) this.catalog('cover-item', ['zzz dekking'], 1, 'stuk');
     for (const c of chainIds) {
       const p = this.product({ ean: fakeEan(), net_content: 1, net_content_unit: 'stuk', name: `cover-${c}` });
+      this.link('cover-item', c, p);
       this.price(p, c, 100);
     }
     return this;

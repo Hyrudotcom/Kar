@@ -33,6 +33,8 @@ describe('Huishouden', () => {
 
   it('shares the invite link with the code in the text (one active code, reused)', async () => {
     await ownerSetup();
+    // D-03: no "Code vervangen" before a code exists.
+    expect(screen.queryByLabelText('Code vervangen')).toBeNull();
     await act(async () => fireEvent.press(screen.getByLabelText('Deel lijst')));
     await flush();
     expect(shareSpy).toHaveBeenCalledTimes(1);
@@ -45,8 +47,13 @@ describe('Huishouden', () => {
     await act(async () => fireEvent.press(screen.getByLabelText('Deel lijst')));
     await flush();
     expect((shareSpy.mock.calls[1]![0] as { message: string }).message).toBe(msg);
-    // Owner replaces the code.
+    // Owner replaces the code: only after a confirmation (old links stop working).
     await act(async () => fireEvent.press(screen.getByLabelText('Code vervangen')));
+    await flush();
+    expect(screen.getByText('Code vervangen?')).toBeTruthy();
+    expect(screen.getByText('Links en codes die je al hebt gedeeld werken dan niet meer.')).toBeTruthy();
+    expect(screen.getByText(`Code: ${m![1]}`)).toBeTruthy(); // not replaced yet
+    await act(async () => fireEvent.press(screen.getAllByLabelText('Code vervangen').at(-1)!));
     await flush();
     expect(screen.queryByText(`Code: ${m![1]}`)).toBeNull();
     expect(screen.getByText(/^Nieuwe code: [A-Z2-9]{6}\. De oude code werkt niet meer\.$/)).toBeTruthy();
@@ -176,7 +183,7 @@ describe('Lidmaatschap', () => {
     // As stored by the /j/<code> route (or "Ik heb een uitnodigingscode") before the app boots.
     await backend.kv.setItem('pending_invite_code', inv.code);
     await renderApp(<App />, backend);
-    expect(await screen.findByText('Word je lid van "Bij Sanne"?')).toBeTruthy();
+    expect(await screen.findByText('Word je lid van ‘Bij Sanne’?')).toBeTruthy();
     expect(screen.getByText('Uitgenodigd door Sanne · 1 lid')).toBeTruthy();
     // Alone in the current household: no "Je verlaat dan …" line.
     expect(screen.queryByText(/Je verlaat dan/)).toBeNull();

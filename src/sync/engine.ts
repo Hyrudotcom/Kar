@@ -116,6 +116,8 @@ class Engine implements GoedSyncEngine {
   private loop: Promise<void> | null = null;
   private rerun = false;
   private forceNext = false;
+  /** syncNow(): the next cycle also sends rows that wait for their per-row backoff. */
+  private retryNow = false;
   private inFlight = new Set<Uuid>();
   private transportFailures = 0;
   private backoffUntil = 0;
@@ -279,6 +281,19 @@ class Engine implements GoedSyncEngine {
 
   failedAsText(): string {
     return formatFailed(this.failed);
+  }
+
+  resolveId(itemId: Uuid): Uuid {
+    return this.resolve(itemId);
+  }
+
+  unsent(): { count: number; text: string } {
+    const now = this.clock.now();
+    const pending: FailedMutation[] = this.outbox
+      .filter((e) => e.state === 'pending')
+      .map((e) => ({ mutationId: e.mutation.id, kind: e.mutation.kind, itemName: this.itemNameFor(e.mutation), reason: 'not_member', failedAt: now }));
+    const all = [...this.failed, ...pending];
+    return { count: all.length, text: formatFailed(all) };
   }
 
   async readPriceCache(): Promise<PriceCacheEntry | null> {
@@ -507,6 +522,7 @@ class Engine implements GoedSyncEngine {
       return;
     }
     this.forceNext = true;
+    this.retryNow = true;
     await this.trigger();
     await this.whenIdle();
   }
@@ -629,8 +645,8 @@ class Engine implements GoedSyncEngine {
     const plan = await this.lock.run(async () => {
       const entry = this.outbox.find((e) => e.mutation.id === mutationId);
       if (entry && entry.mutation.kind !== 'add_item') return null;
-      if (entry && entry.state === 'pending' && !this.inFlight.has(mutationId)) {
-        // Never reached the server: drop it, plus later pending edits of the row it alone created.
+      if (entry && entry.state === 'pending' && entry.attempts === 0 && !this.inFlight.has(mutationId)) {
+        // Never sent: drop it, plus later pending edits of the row it alone created.
         const drop = [entry.mutation.id];
         if (entry.localMeta?.outcome === 'added' || entry.localMeta?.outcome === undefined) {
           const createdId = (entry.mutation as Mutation & { kind: 'add_item' }).payload.id;
@@ -654,6 +670,15 @@ class Engine implements GoedSyncEngine {
         result = entry.result;
         payload = (entry.mutation as Mutation & { kind: 'add_item' }).payload;
         meta = entry.localMeta;
+      } else if (entry && entry.state === 'pending') {
+        // Sent, but no answer yet (e.g. the response was lost): the server may already have it. Keep
+        // the add and queue the inverse of what the local simulation did; the server replays the add
+        // first (FIFO per item) and resolves the alias of its id.
+        payload = (entry.mutation as Mutation & { kind: 'add_item' }).payload;
+        meta = entry.localMeta;
+        const outcome = meta?.outcome;
+        const status = outcome === 'merged' || outcome === 'restored' ? outcome : 'applied';
+        result = { id: entry.mutation.id, status, item_id: meta?.targetId ?? payload.id };
       } else {
         const log = await this.store.getAckLog(mutationId);
         if (log && log.kind === 'add_item') {
@@ -702,7 +727,14 @@ class Engine implements GoedSyncEngine {
     if (force) return true;
     if (!this.deps.connectivity.isOnline()) return false;
     if (this.needsReauth) return false;
-    return this.clock.now() >= this.backoffUntil;
+    const now = this.clock.now();
+    return now >= this.transportBackoffUntil(now);
+  }
+
+  /** backoffUntil is wall-clock time: clamp it like next_attempt_at, so a clock set back cannot stall sync. */
+  private transportBackoffUntil(now: number): number {
+    if (this.backoffUntil > now + BACKOFF_MAX_MS) this.backoffUntil = now + BACKOFF_MAX_MS;
+    return this.backoffUntil;
   }
 
   private trigger(): Promise<void> {
@@ -750,7 +782,7 @@ class Engine implements GoedSyncEngine {
     if (this.stopped || this.membershipLost) return;
     let at = Infinity;
     const now = this.clock.now();
-    if (this.backoffUntil > now) at = this.backoffUntil;
+    if (this.transportBackoffUntil(now) > now) at = this.backoffUntil;
     for (const e of this.outbox) {
       const due = effectiveAttemptAt(e, now);
       if (e.state === 'pending' && due > now && due < at) at = due;
@@ -794,6 +826,10 @@ class Engine implements GoedSyncEngine {
       this.timers.push = null;
       this.pushTimerAt = Infinity;
     }
+    if (this.retryNow) {
+      this.retryNow = false;
+      for (const e of this.outbox) if (e.state === 'pending') e.nextAttemptAt = 0; // in memory; the DB keeps the schedule
+    }
     const pushed = await this.pushAll();
     if (pushed === 'stop') return;
     await this.pullAll();
@@ -823,7 +859,20 @@ class Engine implements GoedSyncEngine {
     let single = false;
     for (let guard = 0; guard < 10_000; guard++) {
       if (this.stopped || this.membershipLost) return 'stop';
-      const batch = await this.lock.run(async () => this.selectBatch(single ? 1 : this.opts.batchSize));
+      const batch = await this.lock.run(async () => {
+        const b = this.selectBatch(single ? 1 : this.opts.batchSize);
+        if (b.length === 0) return b;
+        // Persisted before the request: a row with attempts > 0 may have reached the server even
+        // when no response arrives (undo of such an add must not just drop it locally).
+        try {
+          await this.store.markSent(b.map((e) => e.mutation.id));
+        } catch (e) {
+          for (const x of b) this.inFlight.delete(x.mutation.id);
+          throw e;
+        }
+        for (const e of b) e.attempts += 1;
+        return b;
+      });
       if (batch.length === 0) return 'ok';
       let resp: ApplyMutationsResponse;
       try {
@@ -873,23 +922,58 @@ class Engine implements GoedSyncEngine {
   /**
    * Up to `limit` due pending rows in seq order. Per-item order is preserved: once a row is held back
    * (backoff), every later row touching the same item (or the item it creates) is held back too.
+   * add_item is deduplicated by name on the server, so a later add whose name matches any name a
+   * held-back row reads or writes (delete, rename, check, another add) is held back as well.
    */
   private selectBatch(limit: number): OutboxEntry[] {
     const now = this.clock.now();
     const blocked = new Set<Uuid>();
+    const blockedNames = new Set<string>();
     const batch: OutboxEntry[] = [];
     for (const e of this.outbox) {
       if (batch.length >= limit) break;
       if (e.state !== 'pending' || e.mutation.household_id !== this.deps.householdId) continue;
       const targets = mutationTargets(e.mutation).flatMap((t) => [t, this.resolve(t)]);
-      if (effectiveAttemptAt(e, now) > now || targets.some((t) => blocked.has(t)) || this.inFlight.has(e.mutation.id)) {
+      const addName = e.mutation.kind === 'add_item' ? normalizeName(e.mutation.payload.name) : null;
+      if (
+        effectiveAttemptAt(e, now) > now ||
+        targets.some((t) => blocked.has(t)) ||
+        (addName !== null && blockedNames.has(addName)) ||
+        this.inFlight.has(e.mutation.id)
+      ) {
         for (const t of targets) blocked.add(t);
+        for (const n of this.namesTouched(e.mutation, targets)) blockedNames.add(n);
+        continue;
+      }
+      // The server applies nothing after a 'retry' in the same batch. A row that failed before is
+      // therefore sent in a batch of its own, so it cannot keep holding back unrelated rows.
+      if (e.lastError !== null) {
+        if (batch.length === 0) batch.push(e);
+        else {
+          for (const t of targets) blocked.add(t);
+          for (const n of this.namesTouched(e.mutation, targets)) blockedNames.add(n);
+        }
+        if (batch.length === 1 && batch[0] === e) break;
         continue;
       }
       batch.push(e);
     }
     for (const e of batch) this.inFlight.add(e.mutation.id);
     return batch;
+  }
+
+  /** Normalized names a mutation reads or writes (current server/visible names plus a new name). */
+  private namesTouched(m: Mutation, targets: Uuid[]): string[] {
+    const out: string[] = [];
+    if (m.kind === 'add_item') out.push(normalizeName(m.payload.name));
+    if (m.kind === 'update_item' && m.payload.fields.name !== undefined) out.push(normalizeName(m.payload.fields.name));
+    for (const t of targets) {
+      const base = this.items.get(t);
+      const vis = this.reduced.items.get(t);
+      if (base) out.push(base.normalized_name);
+      if (vis) out.push(vis.normalized_name);
+    }
+    return out;
   }
 
   private itemNameFor(m: Mutation): string {
@@ -967,7 +1051,7 @@ class Engine implements GoedSyncEngine {
             if (mutationTargets(m).some((t) => adds.has(t))) {
               const newId = this.deps.uuid();
               await this.store.renameOutbox(m.id, newId);
-              const attempts = e.attempts + 1;
+              const attempts = Math.max(1, e.attempts);
               const next = now + backoffDelay(attempts, this.opts.random);
               await this.store.markRetry(newId, attempts, next, 'dependency not_found');
               after.push(() => {
@@ -988,7 +1072,7 @@ class Engine implements GoedSyncEngine {
           continue;
         }
         // 'retry', unknown status or missing result: keep pending with per-row backoff.
-        const attempts = e.attempts + 1;
+        const attempts = Math.max(1, e.attempts); // already counted when the batch was sent
         const next = now + backoffDelay(attempts, this.opts.random);
         const err = r ? `retry (${String(status)})` : 'no result';
         await this.store.markRetry(m.id, attempts, next, err);
@@ -1048,7 +1132,9 @@ class Engine implements GoedSyncEngine {
           await this.store.upsertItems(rows);
           await this.store.setMeta('last_seq', String(cursor));
           if (resp.household) await this.store.setMeta('household', JSON.stringify(resp.household));
-          await this.store.deleteAckedUpTo(cursor);
+          // Acked overlays are dropped only after the LAST page: a row edited at seq <= cursor may
+          // arrive on a later page (edited again by someone else), and must not flicker back.
+          if (!resp.has_more) await this.store.deleteAckedUpTo(cursor);
         });
         for (const it of rows) {
           const prev = this.items.get(it.id);
@@ -1057,7 +1143,7 @@ class Engine implements GoedSyncEngine {
         this.lastSeq = cursor;
         const renamed = !!resp.household && resp.household.name !== this.household?.name;
         if (resp.household) this.household = resp.household;
-        this.outbox = this.outbox.filter((e) => !(e.state === 'acked' && (e.ackedSeq ?? 0) <= cursor));
+        if (!resp.has_more) this.outbox = this.outbox.filter((e) => !(e.state === 'acked' && (e.ackedSeq ?? 0) <= cursor));
         this.recompute(renamed); // a household rename re-publishes so getHousehold() readers update
       });
       if (!resp.has_more) return;
@@ -1065,7 +1151,9 @@ class Engine implements GoedSyncEngine {
   }
 
   private async loseMembership(): Promise<void> {
-    if (this.membershipLost) return;
+    // stop() means the session is already moving on (leave, accept, sign-out, wipe): a not_member
+    // answer of a request that was in flight is expected then and must not start the removal flow.
+    if (this.membershipLost || this.stopped) return;
     this.membershipLost = true;
     await this.lock.run(async () => {
       const now = this.clock.now();

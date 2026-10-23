@@ -75,14 +75,23 @@ export function createAuth(sb: SupabaseClient): AuthApi {
   };
 }
 
+/** true when the request never got an HTTP answer (offline, DNS, reset, timeout). */
+export function isTransportFailure(status: number | undefined, error: unknown): boolean {
+  if (status !== undefined && status > 0) return false;
+  const msg = String((error as { message?: unknown } | null)?.message ?? error ?? '');
+  return status === 0 || /fetch|network|timeout|abort|ECONN|ENOTFOUND|EAI_AGAIN/i.test(msg);
+}
+
 export function createHouseholds(sb: SupabaseClient): HouseholdApi {
   async function call<R>(fn: string, args?: Record<string, unknown>): Call<R> {
     try {
-      const { data, error } = await sb.rpc(fn, args);
-      if (error || data === null || typeof data !== 'object') return { ok: false, error: 'network' };
+      const { data, error, status } = await sb.rpc(fn, args);
+      // postgrest-js reports a failed fetch (no connection, DNS, timeout) as status 0.
+      if (error) return { ok: false, error: isTransportFailure(status, error) ? 'network' : 'server' };
+      if (data === null || typeof data !== 'object') return { ok: false, error: 'server' };
       return data as R;
-    } catch {
-      return { ok: false, error: 'network' };
+    } catch (e) {
+      return { ok: false, error: isTransportFailure(0, e) ? 'network' : 'server' };
     }
   }
   return {

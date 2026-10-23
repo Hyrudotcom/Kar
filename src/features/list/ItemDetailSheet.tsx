@@ -59,6 +59,7 @@ export function ItemDetailSheet({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deletingRef = useRef(false);
   const fieldsRef = useRef<Fields | null>(null);
+  const saveRef = useRef<() => Promise<void>>(async () => undefined);
   useLayoutEffect(() => {
     fieldsRef.current = fields;
   });
@@ -113,19 +114,32 @@ export function ItemDetailSheet({
     }
     if (Object.keys(out).length > 0) await engine.updateItem(cur.id, out).catch(() => undefined);
   }, [engine]);
+  useLayoutEffect(() => {
+    saveRef.current = save;
+  });
 
-  // Deleted elsewhere while open: close with "… Terugzetten".
+  // Deleted elsewhere while open: close with "… Terugzetten". An add the server merged into another
+  // row is not gone: useItem follows the alias, and the sheet stays open on the merged row.
   useEffect(() => {
     if (itemId && !item && last.current && !deletingRef.current) {
+      void save(); // keep what was typed (the engine ignores edits of a deleted row; a restore keeps them)
       const gone = last.current;
       last.current = null;
       onGone(gone);
     }
-  }, [item, itemId, onGone]);
+  }, [item, itemId, onGone, save]);
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  // Unmount (another item opened, screen left): flush a pending save instead of dropping it.
+  useEffect(
+    () => () => {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+        void saveRef.current();
+      }
+    },
+    [],
+  );
 
   const change = (key: keyof Fields, text: string) => {
     dirty.current.add(key);

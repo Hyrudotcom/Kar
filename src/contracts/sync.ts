@@ -210,6 +210,13 @@ export interface SyncEngine {
   discardFailed(mutationIds: Uuid[]): Promise<void>;
   /** Plain-text export of failed mutations ("Kopieer als tekst"). */
   failedAsText(): string;
+  /**
+   * Failed mutations plus every pending outbox row, for the removal flow ("N wijzigingen konden niet
+   * worden opgeslagen" + "Kopieer als tekst") before the local file is wiped.
+   */
+  unsent(): { count: number; text: string };
+  /** The id an item lives under now (follows server merge/restore aliases of an add). */
+  resolveId(itemId: Uuid): Uuid;
 
   /** Household suggestion history (design-spec 3, SuggestionList), most used first. */
   getHistory(): Promise<HistoryEntry[]>;

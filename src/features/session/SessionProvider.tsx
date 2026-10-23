@@ -15,15 +15,22 @@ import { useBackend } from './BackendContext';
 export interface HouseholdInfo {
   id: Uuid;
   name: string;
+  /** 'member' is also used while the role is unknown (owner controls stay hidden until confirmed). */
   role: 'owner' | 'member';
   members: HouseholdMember[];
 }
 
+/** Why the signed-in user has no list on screen: no network, the server failed, or the local file did. */
+export type UnavailableReason = 'network' | 'server' | 'local';
+
 export type SessionState =
   | { kind: 'booting' }
   | { kind: 'signedOut' }
-  /** First start without internet and nothing cached: "Geen internet" (design-spec 4.7). */
-  | { kind: 'noInternet'; user: AuthUser }
+  /**
+   * No list to show: first start without internet and nothing cached ("Geen internet", design-spec
+   * 4.7), a server error while creating/loading the household, or the local database failed to open.
+   */
+  | { kind: 'unavailable'; user: AuthUser; reason: UnavailableReason }
   /** A different account signed in while the previous account's file still has unsent changes (5.10). */
   | { kind: 'switchAccount'; user: AuthUser; previousUserId: Uuid; unsent: number }
   | { kind: 'ready'; user: AuthUser; household: HouseholdInfo; engine: AppEngine }
@@ -43,7 +50,8 @@ export interface Session {
   signOut(force?: boolean): Promise<ActionResult>;
   leaveHousehold(force?: boolean): Promise<ActionResult>;
   deleteAccount(): Promise<ActionResult>;
-  acceptInvite(code: string): Promise<ActionResult>;
+  /** Returns { error:'pending', pending } when changes could not be sent and force is not set. */
+  acceptInvite(code: string, force?: boolean): Promise<ActionResult>;
   /** After "Je bent geen lid meer": make a new "Thuis" and continue. */
   continueAfterRemoval(): Promise<void>;
   confirmSwitchAccount(): Promise<void>;
@@ -72,6 +80,16 @@ async function readCache(backend: Backend, userId: Uuid): Promise<CachedHousehol
   }
 }
 
+async function readPendingWipes(backend: Backend): Promise<Uuid[]> {
+  try {
+    const raw = await backend.kv.getItem(KV_KEYS.pendingWipes);
+    const v = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(v) ? v.filter((x): x is Uuid => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export function normalizeInviteCode(raw: string): string | null {
   const code = raw.trim().toUpperCase().replace(/[\s-]/g, '');
   return INVITE_CODE_REGEX.test(code) ? code : null;
@@ -90,20 +108,43 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setStateRaw(s);
   }, []);
 
+  /** Set while leave / accept / delete account run: the engine's not_member answers are expected then. */
+  const transitioning = useRef(false);
+  /** Single flight for the removal flow (engine listener, foreground check and establish can all detect it). */
+  const losing = useRef(false);
+
   const stopEngine = useCallback(async () => {
     const e = engineRef.current;
     engineRef.current = null;
     if (e) await e.dispose().catch(() => undefined);
   }, []);
 
+  /**
+   * Deletes a user's local file. A failed delete is never swallowed silently: the user id is kept in
+   * `pending_wipes` and the delete is retried on every start until it succeeds (user data must not
+   * stay on the phone after sign-out, account deletion or removal).
+   */
+  const wipeUser = useCallback(
+    async (userId: Uuid, engine: AppEngine | null) => {
+      try {
+        await backend.local.wipe(userId, engine);
+      } catch (err) {
+        console.warn('Goedboodschap: local data could not be deleted, retrying at next start', err);
+        const list = await readPendingWipes(backend);
+        if (!list.includes(userId)) await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify([...list, userId])).catch(() => undefined);
+      }
+      await backend.kv.removeItem(cacheKey(userId)).catch(() => undefined);
+    },
+    [backend],
+  );
+
   const wipe = useCallback(
     async (userId: Uuid) => {
       const e = engineRef.current;
       engineRef.current = null;
-      await backend.local.wipe(userId, e).catch(() => undefined);
-      await backend.kv.removeItem(cacheKey(userId)).catch(() => undefined);
+      await wipeUser(userId, e);
     },
-    [backend],
+    [wipeUser],
   );
 
   /** Assigned after `wipe` below; refs keep `establish` stable. */
@@ -125,8 +166,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             setState({ kind: 'switchAccount', user, previousUserId: last, unsent });
             return;
           }
-          await backend.local.wipe(last, null).catch(() => undefined);
-          await backend.kv.removeItem(cacheKey(last)).catch(() => undefined);
+          await wipeUser(last, null);
         }
       }
       await backend.kv.setItem(KV_KEYS.lastUserId, user.id).catch(() => undefined);
@@ -134,15 +174,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const cached = await readCache(backend, user.id);
       if (stale()) return;
 
-      const fetchHousehold = async (): Promise<HouseholdInfo | 'network'> => {
+      /** `confirmed` = role and members come from get_my_household (only then is the role cached). */
+      const fetchHousehold = async (): Promise<(HouseholdInfo & { confirmed: boolean }) | 'network' | 'server'> => {
         const ensured = await backend.households.createHousehold('Thuis');
-        if (!ensured.ok) return 'network';
+        if (!ensured.ok) return ensured.error === 'network' ? 'network' : 'server';
         const mine = await backend.households.getMyHousehold();
         if (!mine.ok || !mine.household || !mine.role) {
-          return { id: ensured.household.id, name: ensured.household.name, role: 'owner', members: [] };
+          // Only a household this call created is certainly ours to own; never guess "owner".
+          return { id: ensured.household.id, name: ensured.household.name, role: ensured.created ? 'owner' : 'member', members: [], confirmed: ensured.created };
         }
-        return { id: mine.household.id, name: mine.household.name, role: mine.role, members: mine.members };
+        return { id: mine.household.id, name: mine.household.name, role: mine.role, members: mine.members, confirmed: true };
       };
+      const cache = (h: HouseholdInfo & { confirmed: boolean }) =>
+        h.confirmed ? backend.kv.setItem(cacheKey(user.id), JSON.stringify({ id: h.id, name: h.name, role: h.role })).catch(() => undefined) : undefined;
 
       let household: HouseholdInfo | null = null;
       let refreshInBackground = false;
@@ -153,20 +197,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } else {
         const r = await fetchHousehold();
         if (stale()) return;
-        if (r === 'network') {
-          setState({ kind: 'noInternet', user });
+        if (r === 'network' || r === 'server') {
+          setState({ kind: 'unavailable', user, reason: r });
           return;
         }
-        household = r;
-        await backend.kv.setItem(cacheKey(user.id), JSON.stringify({ id: r.id, name: r.name, role: r.role })).catch(() => undefined);
+        const { confirmed: _confirmed, ...info } = r;
+        household = info;
+        await cache(r);
       }
 
       await stopEngine();
       let engine: AppEngine;
       try {
         engine = await backend.local.openEngine(user, household.id);
-      } catch {
-        if (!stale()) setState({ kind: 'noInternet', user });
+      } catch (err) {
+        // Locked, corrupt or full database: not a network problem, so not "Geen internet" (D-01).
+        console.warn('Goedboodschap: local database could not be opened', err);
+        if (!stale()) setState({ kind: 'unavailable', user, reason: 'local' });
         return;
       }
       if (stale()) {
@@ -176,6 +223,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       engineRef.current = engine;
       const hhName = household.name;
       engine.onMembershipLost(() => {
+        if (transitioning.current) return;
         const s = stateRef.current;
         if (s.kind === 'ready' && s.engine === engine) void lostRef.current(user, s.household.name);
         else if (engineRef.current === engine) void lostRef.current(user, hhName);
@@ -184,33 +232,39 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       if (refreshInBackground) {
         const r = await fetchHousehold();
-        if (stale() || r === 'network') return;
+        if (stale() || r === 'network' || r === 'server') return;
         if (r.id !== household.id) {
           await lostRef.current(user, household.name);
           return;
         }
-        await backend.kv.setItem(cacheKey(user.id), JSON.stringify({ id: r.id, name: r.name, role: r.role })).catch(() => undefined);
+        await cache(r);
         const s = stateRef.current;
-        if (s.kind === 'ready' && s.engine === engine) setState({ ...s, household: r });
+        const { confirmed, ...info } = r;
+        if (s.kind === 'ready' && s.engine === engine && confirmed) setState({ ...s, household: info });
       }
     },
-    [backend, setState, stopEngine],
+    [backend, setState, stopEngine, wipeUser],
   );
 
   const handleMembershipLost = async (user: AuthUser, householdName: string) => {
-    const s = stateRef.current;
-    if (s.kind === 'removed') return;
-    generation.current++;
-    const e = engineRef.current;
-    let failedCount = 0;
-    let failedText = '';
-    if (e) {
-      const st = e.getStatus();
-      failedCount = st.failed.filter((f) => f.reason === 'not_member').length || st.pendingCount;
-      failedText = failedCount > 0 ? e.failedAsText() : '';
+    if (losing.current || transitioning.current || stateRef.current.kind === 'removed') return;
+    losing.current = true;
+    try {
+      generation.current++;
+      const e = engineRef.current;
+      engineRef.current = null;
+      let unsent = { count: 0, text: '' };
+      if (e) {
+        // Stop first (drains an in-flight request), then collect failed AND still pending changes:
+        // the file that holds them is deleted next.
+        await e.stop().catch(() => undefined);
+        unsent = e.unsent();
+      }
+      await wipeUser(user.id, e);
+      setState({ kind: 'removed', user, householdName, failedCount: unsent.count, failedText: unsent.text });
+    } finally {
+      losing.current = false;
     }
-    await wipe(user.id);
-    setState({ kind: 'removed', user, householdName, failedCount, failedText });
   };
   useLayoutEffect(() => {
     lostRef.current = handleMembershipLost;
@@ -236,11 +290,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         s.engine.notifyReauthenticated();
         return;
       }
-      if ((s.kind === 'noInternet' || s.kind === 'switchAccount' || s.kind === 'removed') && s.user.id === user.id) return;
+      if ((s.kind === 'unavailable' || s.kind === 'switchAccount' || s.kind === 'removed') && s.user.id === user.id) return;
       void establish(user);
     };
     const unsub = backend.auth.onUserChange(onUser);
     void (async () => {
+      // Files whose delete failed earlier (sign-out, removal, account deletion) go first.
+      for (const id of await readPendingWipes(backend)) {
+        try {
+          await backend.local.wipe(id, null);
+          const rest = (await readPendingWipes(backend)).filter((x) => x !== id);
+          await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify(rest)).catch(() => undefined);
+        } catch (err) {
+          console.warn('Goedboodschap: local data could not be deleted', err);
+        }
+      }
+      if (!alive) return;
       const code = await backend.kv.getItem(KV_KEYS.pendingInviteCode).catch(() => null);
       if (alive && code) setPendingInviteState(code);
       const user = await backend.auth.getUser().catch(() => null);
@@ -305,11 +370,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await wipe(s.user.id);
         await backend.kv.removeItem(KV_KEYS.lastUserId).catch(() => undefined);
       }
+      await setPendingInvite(null); // a code saved by this user is not offered to the next account
       setState({ kind: 'signedOut' });
       await backend.auth.signOut();
       return { ok: true };
     },
-    [backend, setState, wipe],
+    [backend, setState, wipe, setPendingInvite],
   );
 
   const leaveHousehold = useCallback(
@@ -319,10 +385,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!backend.connectivity.isOnline()) return { ok: false, error: 'offline' };
       const pending = s.engine.getStatus().pendingCount;
       if (pending > 0 && !force) return { ok: false, error: 'pending', pending };
-      const r = await backend.households.leaveHousehold(s.household.id);
-      if (!r.ok && r.error !== 'not_member') return { ok: false, error: r.error };
-      generation.current++;
-      await wipe(s.user.id);
+      transitioning.current = true;
+      try {
+        const r = await backend.households.leaveHousehold(s.household.id);
+        if (!r.ok && r.error !== 'not_member') return { ok: false, error: r.error };
+        generation.current++;
+        await wipe(s.user.id);
+      } finally {
+        transitioning.current = false;
+      }
       await establish(s.user, { skipAccountCheck: true });
       return { ok: true };
     },
@@ -331,30 +402,43 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const deleteAccount = useCallback(async (): Promise<ActionResult> => {
     const s = stateRef.current;
-    if (s.kind !== 'ready' && s.kind !== 'removed' && s.kind !== 'noInternet') return { ok: false, error: 'not_authenticated' };
+    if (s.kind !== 'ready' && s.kind !== 'removed' && s.kind !== 'unavailable') return { ok: false, error: 'not_authenticated' };
     if (!backend.connectivity.isOnline()) return { ok: false, error: 'offline' };
-    const r = await backend.households.deleteAccount();
-    if (!r.ok) return { ok: false, error: r.error };
-    generation.current++;
-    await wipe(s.user.id);
-    await backend.kv.removeItem(KV_KEYS.lastUserId).catch(() => undefined);
-    setState({ kind: 'signedOut' });
-    await backend.auth.signOut();
-    return { ok: true };
-  }, [backend, setState, wipe]);
-
-  const acceptInvite = useCallback(
-    async (code: string): Promise<ActionResult> => {
-      const s = stateRef.current;
-      if (s.kind !== 'ready') return { ok: false, error: 'not_authenticated' };
-      if (!backend.connectivity.isOnline()) return { ok: false, error: 'offline' };
-      // Online-only flow: drain the outbox first so nothing is left behind in the old household.
-      await s.engine.syncNow();
-      if (s.engine.getStatus().pendingCount > 0) return { ok: false, error: 'pending' };
-      const r = await backend.households.acceptInvite(code);
+    transitioning.current = true;
+    try {
+      const r = await backend.households.deleteAccount();
       if (!r.ok) return { ok: false, error: r.error };
       generation.current++;
       await wipe(s.user.id);
+    } finally {
+      transitioning.current = false;
+    }
+    await backend.kv.removeItem(KV_KEYS.lastUserId).catch(() => undefined);
+    await setPendingInvite(null);
+    setState({ kind: 'signedOut' });
+    await backend.auth.signOut();
+    return { ok: true };
+  }, [backend, setState, wipe, setPendingInvite]);
+
+  const acceptInvite = useCallback(
+    async (code: string, force = false): Promise<ActionResult> => {
+      const s = stateRef.current;
+      if (s.kind !== 'ready') return { ok: false, error: 'not_authenticated' };
+      if (!backend.connectivity.isOnline()) return { ok: false, error: 'offline' };
+      // Online-only flow: drain the outbox first (syncNow also retries rows that wait for a backoff),
+      // so nothing is left behind in the old household. What still cannot be sent needs a confirmation.
+      await s.engine.syncNow();
+      const pending = s.engine.getStatus().pendingCount;
+      if (pending > 0 && !force) return { ok: false, error: 'pending', pending };
+      transitioning.current = true;
+      try {
+        const r = await backend.households.acceptInvite(code);
+        if (!r.ok) return { ok: false, error: r.error };
+        generation.current++;
+        await wipe(s.user.id);
+      } finally {
+        transitioning.current = false;
+      }
       await setPendingInvite(null);
       await establish(s.user, { skipAccountCheck: true });
       return { ok: true };
@@ -371,20 +455,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const confirmSwitchAccount = useCallback(async () => {
     const s = stateRef.current;
     if (s.kind !== 'switchAccount') return;
-    await backend.local.wipe(s.previousUserId, null).catch(() => undefined);
-    await backend.kv.removeItem(cacheKey(s.previousUserId)).catch(() => undefined);
+    await wipeUser(s.previousUserId, null);
     await establish(s.user, { skipAccountCheck: true });
-  }, [backend, establish]);
+  }, [establish, wipeUser]);
 
   const cancelSwitchAccount = useCallback(async () => {
     generation.current++;
+    await setPendingInvite(null);
     setState({ kind: 'signedOut' });
     await backend.auth.signOut();
-  }, [backend, setState]);
+  }, [backend, setState, setPendingInvite]);
 
   const retry = useCallback(async () => {
     const s = stateRef.current;
-    if (s.kind === 'noInternet') await establish(s.user, { skipAccountCheck: true });
+    if (s.kind === 'unavailable') await establish(s.user, { skipAccountCheck: true });
   }, [establish]);
 
   const value = useMemo<Session>(

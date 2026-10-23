@@ -329,3 +329,19 @@ describe('removed member', () => {
     });
   });
 });
+
+describe('no passwords (pre-account takeover)', () => {
+  test('a password stored on insert or update is blanked', async () => {
+    const id = uuid();
+    const email = `pw-${id}@voorbeeld.nl`;
+    await admin(
+      `insert into auth.users (instance_id, id, aud, role, email, encrypted_password, created_at, updated_at)
+       values ('00000000-0000-0000-0000-000000000000', $1, 'authenticated', 'authenticated', $2, extensions.crypt('geheim123', extensions.gen_salt('bf')), now(), now())`,
+      [id, email],
+    );
+    expect(await admin(`select encrypted_password from auth.users where id = $1`, [id])).toEqual([{ encrypted_password: '' }]);
+    await admin(`update auth.users set encrypted_password = extensions.crypt('anders456', extensions.gen_salt('bf')) where id = $1`, [id]);
+    expect(await admin(`select encrypted_password from auth.users where id = $1`, [id])).toEqual([{ encrypted_password: '' }]);
+    await admin(`delete from auth.users where id = $1`, [id]);
+  });
+});

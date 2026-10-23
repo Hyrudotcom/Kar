@@ -3,12 +3,13 @@
  * code only. No carousel. "Ik heb een uitnodigingscode" stores a code for after sign-in.
  */
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { appleIdToken } from '@/src/lib/auth/apple';
 import { useGoogleIdToken } from '@/src/lib/auth/google';
 import type { AuthResult } from '@/src/lib/backend/types';
+import { LEGAL_URLS } from '@/src/lib/legal';
 import { AppText, Divider, OutlineButton, PrimaryButton, TextButton, TextField, useColors } from '@/src/ui';
 import { MAX_FONT_SCALE, radius, sizes, spacing } from '@/src/ui/tokens';
 
@@ -30,15 +31,19 @@ export function SignInScreen() {
   const [busy, setBusy] = useState<null | 'email' | 'apple' | 'google' | 'code'>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
 
-  const run = async (which: NonNullable<typeof busy>, fn: () => Promise<AuthResult>): Promise<boolean> => {
+  const run = async (which: NonNullable<typeof busy>, fn: () => Promise<AuthResult>, keepBusyOnSuccess = true): Promise<boolean> => {
     setBusy(which);
     setError(null);
+    let ok = false;
     try {
       const r = await fn();
+      ok = r.ok;
       if (!r.ok) setError(authErrorText(r.error));
       return r.ok;
     } finally {
-      setBusy(null);
+      // After a successful sign-in the session loads the household while this screen is still
+      // mounted: keep the spinner until the session leaves "signedOut" (the screen unmounts then).
+      if (!ok || !keepBusyOnSuccess) setBusy(null);
     }
   };
 
@@ -48,7 +53,7 @@ export function SignInScreen() {
       setError(authErrorText('invalid_email'));
       return;
     }
-    if (await run('email', () => backend.auth.sendEmailCode(e))) setStep('code');
+    if (await run('email', () => backend.auth.sendEmailCode(e), false)) setStep('code');
   };
 
   const apple = () =>
@@ -139,8 +144,12 @@ export function SignInScreen() {
           </View>
           <View style={styles.foot}>
             <AppText variant="footnote" color="textMuted">
-              Door verder te gaan ga je akkoord met de voorwaarden.
+              Door verder te gaan ga je akkoord met de voorwaarden en het privacybeleid.
             </AppText>
+            <View style={styles.links}>
+              <TextButton label="Voorwaarden" tone="muted" accessibilityRole="link" onPress={() => void Linking.openURL(LEGAL_URLS.terms)} />
+              <TextButton label="Privacybeleid" tone="muted" accessibilityRole="link" onPress={() => void Linking.openURL(LEGAL_URLS.privacy)} />
+            </View>
             {session.pendingInvite ? (
               <AppText variant="footnote" color="textMuted" testID="pending-invite">
                 {`Code ${session.pendingInvite} bewaard. Log in om lid te worden.`}
@@ -216,7 +225,8 @@ export function CodeStep({
     setError(null);
     setNetworkError(false);
     const r = await onVerify(value);
-    setBusy(false);
+    // Success: stay busy (spinner) while the session loads the household; this screen unmounts then.
+    if (!r.ok) setBusy(false);
     if (!r.ok) {
       setError(authErrorText(r.error));
       setNetworkError(r.error === 'network');
@@ -272,6 +282,7 @@ export function CodeStep({
               style={styles.hiddenInput}
             />
           </Pressable>
+          {busy ? <ActivityIndicator color={c.accent} accessibilityLabel="Bezig met inloggen" testID="code-busy" /> : null}
           {error ? (
             <AppText variant="callout" color="danger" accessibilityLiveRegion="polite" testID="code-error">
               {error}
@@ -283,19 +294,25 @@ export function CodeStep({
               Demomodus: elke code van 6 cijfers werkt, behalve 000000.
             </AppText>
           ) : null}
-          <TextButton
-            label={wait > 0 ? `Opnieuw sturen (${wait} s)` : 'Opnieuw sturen'}
-            accessibilityLabel={wait > 0 ? `Opnieuw sturen, kan over ${wait} seconden` : 'Opnieuw sturen'}
-            disabled={wait > 0}
-            onPress={async () => {
-              const r = await onResend();
-              if (r.ok) {
-                setWait(RESEND_AFTER_S);
-                setError(null);
-              } else setError(authErrorText(r.error));
-            }}
-          />
-          <TextButton label="Ander e-mailadres" tone="muted" onPress={onBack} />
+          {wait > 0 ? (
+            // The countdown is information, so muted text (readable), not a greyed-out button (D-19).
+            <AppText variant="body" color="textMuted" accessibilityLabel={`Opnieuw sturen, kan over ${wait} seconden`} style={styles.countdown}>
+              {`Opnieuw sturen (${wait} s)`}
+            </AppText>
+          ) : (
+            <TextButton
+              label="Opnieuw sturen"
+              disabled={busy}
+              onPress={async () => {
+                const r = await onResend();
+                if (r.ok) {
+                  setWait(RESEND_AFTER_S);
+                  setError(null);
+                } else setError(authErrorText(r.error));
+              }}
+            />
+          )}
+          <TextButton label="Ander e-mailadres" tone="muted" disabled={busy} onPress={onBack} />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -310,6 +327,8 @@ const styles = StyleSheet.create({
   or: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   orLine: { flex: 1 },
   foot: { gap: spacing.xs },
+  links: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' },
+  countdown: { minHeight: sizes.minTouch, textAlignVertical: 'center', paddingVertical: spacing.md },
   cells: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.sm },
   cell: { flex: 1, minHeight: 56, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, maxWidth: 56 },
   hiddenInput: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.011, color: 'transparent' },

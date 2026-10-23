@@ -1,7 +1,7 @@
 import type { ComparisonResult, StoreBasket } from '@/src/contracts';
 import { compareBaskets } from '../engine';
 import { DAY_MS } from '../status';
-import { DatasetBuilder, LICENSED, NOW, OPEN_PRICES, daysAgo, inDays, input, item } from './fixtures';
+import { DatasetBuilder, LICENSED, NOW, OPEN_PRICES, daysAgo, fakeEan, inDays, input, item } from './fixtures';
 
 const store = (r: ComparisonResult, chain: string): StoreBasket => {
   const s = r.stores.find((b) => b.chain_id === chain);
@@ -212,6 +212,26 @@ describe('ranking and labels', () => {
     const b = twoChainBasket().cover('plus');
     const r = compareBaskets(input([item('melk')], b.data));
     expect(store(r, 'plus')).toMatchObject({ complete: false, priced_count: 0, compared_count: 1, total_cents: null });
+  });
+});
+
+describe('coverage: when is a comparison offered at all', () => {
+  /** Regression: any non-unknown price of any product used to count, e.g. one 13-day-old unlinked price. */
+  test('a chain with only stale prices does not count as verified', () => {
+    const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml');
+    b.simple('melk-halfvol', 'ah', 119, 1000, 'ml');
+    b.simple('melk-halfvol', 'jumbo', 115, 1000, 'ml', daysAgo(13));
+    expect(compareBaskets(input([item('melk')], b.data)).state).toBe('unavailable');
+  });
+
+  test('a chain whose prices are all for unlinked products does not count', () => {
+    const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml');
+    b.simple('melk-halfvol', 'ah', 119, 1000, 'ml');
+    const loose = b.product({ ean: fakeEan(), net_content: 1000, net_content_unit: 'ml' });
+    b.price(loose, 'jumbo', 99);
+    expect(compareBaskets(input([item('melk')], b.data)).state).toBe('unavailable');
+    b.link('melk-halfvol', 'jumbo', loose);
+    expect(compareBaskets(input([item('melk')], b.data)).state).toBe('ranked');
   });
 });
 

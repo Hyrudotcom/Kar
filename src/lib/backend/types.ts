@@ -43,9 +43,12 @@ export interface AuthApi {
   signOut(): Promise<void>;
 }
 
-/** Household RPC results, plus 'network' when the call never reached the server. */
-export type Call<R> = Promise<R | { ok: false; error: 'network' }>;
-export type HouseholdCallError = HouseholdErrorCode | 'network';
+/**
+ * Household RPC results, plus 'network' when the call never reached the server and 'server' when the
+ * server answered with an error (exception, 5xx, malformed body). Only 'network' means "Geen internet".
+ */
+export type Call<R> = Promise<R | { ok: false; error: 'network' | 'server' }>;
+export type HouseholdCallError = HouseholdErrorCode | 'network' | 'server';
 
 export interface HouseholdApi {
   getMyHousehold(): Call<GetMyHouseholdResult>;
@@ -112,4 +115,6 @@ export const KV_KEYS = {
   lastUserId: 'last_user_id',
   /** + `_<userId>`: last known household (id, name, role) for an offline cold start. */
   householdCache: 'household_cache',
+  /** JSON array of user ids whose local file could not be deleted yet; retried at every start. */
+  pendingWipes: 'pending_wipes',
 } as const;

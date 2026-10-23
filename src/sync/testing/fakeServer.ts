@@ -170,6 +170,9 @@ export class FakeServer {
 
     const results: MutationResult[] = [];
     let changed = false;
+    // Like apply_mutations: after the first 'retry' nothing new is applied in this batch, so a later
+    // mutation can never overtake an earlier one (e.g. an add merging into a row a delete removes).
+    let stopped = false;
     for (const m of req.mutations) {
       this.deliveries.set(m.id, (this.deliveries.get(m.id) ?? 0) + 1);
       const logged = this.log.get(m.id);
@@ -177,7 +180,8 @@ export class FakeServer {
         results.push(logged.user_id === userId ? { ...logged.result, replayed: true } : { id: m.id, status: 'rejected', reason: 'invalid' });
         continue;
       }
-      if (this.retryIds.has(m.id)) {
+      if (stopped || this.retryIds.has(m.id)) {
+        stopped = true;
         results.push({ id: m.id, status: 'retry' });
         continue;
       }
@@ -206,6 +210,7 @@ export class FakeServer {
         if (h.last_seq !== seqBefore) changed = true;
       }
       if (result.status !== 'retry') this.log.set(m.id, { household_id: h.id, user_id: userId, kind: m.kind, result });
+      else stopped = true;
       results.push(result);
     }
     if (changed) this.notify(h.id, 'items');

@@ -228,6 +228,21 @@ export class DirectEngine implements AppEngine {
     return failedAsText(this.failed);
   }
 
+  /** No outbox: every change was applied on the spot, so only failed ones are unsent. */
+  unsent(): { count: number; text: string } {
+    return { count: this.failed.length, text: failedAsText(this.failed) };
+  }
+
+  resolveId(itemId: Uuid): Uuid {
+    let cur = itemId;
+    for (let i = 0; i < 8; i++) {
+      const a = this.server.aliases.get(cur);
+      if (!a || a.household_id !== this.householdId || a.target_id === cur) return cur;
+      cur = a.target_id;
+    }
+    return cur;
+  }
+
   async getHistory(): Promise<HistoryEntry[]> {
     return [...this.history.values()].sort((a, b) => b.use_count - a.use_count || b.last_used_at - a.last_used_at);
   }

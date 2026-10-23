@@ -89,17 +89,16 @@ describe('SupabaseSyncTransport', () => {
     expect(changes!.handlers.map((h) => [h.filter.table, h.filter.filter])).toEqual([
       ['list_items', 'household_id=eq.h1'],
       ['households', 'id=eq.h1'],
-      ['household_members', 'household_id=eq.h1'],
     ]);
     expect(personal).toMatchObject({ name: 'user:u1', opts: { config: { private: true } } });
     changes!.handlers[0]!.cb({ new: { quantity: 999 } });
-    changes!.handlers[2]!.cb({});
+    changes!.handlers[1]!.cb({});
     personal!.handlers[0]!.cb({});
     // membership_changed for another household (old solo household after accept_invite) is ignored
     personal!.handlers[0]!.cb({ payload: { household_id: 'h-old', reason: 'household_deleted' } });
     personal!.handlers[0]!.cb({ payload: { household_id: 'h1', reason: 'removed' } });
     changes!.statusCb?.('SUBSCRIBED');
-    expect(nudges).toEqual(['items', 'membership', 'membership', 'membership', 'items']);
+    expect(nudges).toEqual(['items', 'household', 'membership', 'membership', 'items']);
     unsub();
     expect(channels.every((c) => c.removed)).toBe(true);
   });

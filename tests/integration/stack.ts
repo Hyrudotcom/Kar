@@ -45,10 +45,10 @@ const clients: SupabaseClient[] = [];
 export function newClient(): SupabaseClient {
   // Every simulated device gets its own client IP (TEST-NET-2), as phones would: the per-IP invite
   // rate limit (30/h) must not couple independent tests that all run from 127.0.0.1.
-  const ip = `198.51.100.${1 + Math.floor(Math.random() * 254)}, 10.0.${clients.length % 250}.1`;
+  const ip = `198.51.100.${1 + Math.floor(Math.random() * 254)}`;
   const c = createClient(API_URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: { headers: { 'x-forwarded-for': ip } },
+    global: { headers: { 'cf-connecting-ip': ip } },
   });
   clients.push(c);
   return c;

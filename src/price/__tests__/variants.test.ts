@@ -35,6 +35,7 @@ describe('Heinz Tomato Ketchup: regular is 570 ml; 500 ml is Bio / Hot Chilli / 
   test('if a chain only has the 500 ml variant, it is unknown there unless explicitly linked', () => {
     const { b } = heinz();
     b.data.observations = b.data.observations.filter((o) => !(o.chain_id === 'jumbo' && o.price_cents === 339));
+    b.cover('jumbo'); // Jumbo has verified prices for other items (an unlinked variant alone does not count)
     const r = compareBaskets(input([item('ketchup')], b.data));
     expect(store(r, 'jumbo').lines[0]!.status).toBe('unknown');
     expect(store(r, 'jumbo').complete).toBe(false);
@@ -88,6 +89,7 @@ describe('Ariel Original vloeibaar: 900 ml = 20 wasbeurten, Plus 810 ml = 18 was
     const ml = b.product({ ean: '8700216604147', net_content: 900, net_content_unit: 'ml', name: 'Ariel 900 ml' });
     b.data.links = b.data.links.filter((l) => l.chain_id !== 'plus');
     b.link('wasmiddel-ariel-original', 'plus', ml).price(ml, 'plus', 100);
+    b.cover('plus');
     expect(store(compareBaskets(input([item('ariel')], b.data)), 'plus').lines[0]!.status).toBe('unknown');
   });
 
@@ -120,6 +122,7 @@ describe('Calvé Pindakaas 350 g: 6+ variants with the same name and weight; onl
   test('without a link at a chain, an identically named product there does not count', () => {
     const { b } = calve();
     b.data.links = b.data.links.filter((l) => l.chain_id !== 'jumbo');
+    b.cover('jumbo');
     const r = compareBaskets(input([item('pindakaas')], b.data));
     expect(store(r, 'jumbo').lines[0]!).toMatchObject({ status: 'unknown', ean: null, line_total_cents: null });
   });
@@ -138,6 +141,7 @@ describe('Bananen: tros, per kg, 5 stuks and los are different products', () => 
     const tros = b.product({ ean: '2000000000130', net_content: 5, net_content_unit: 'stuk', name: 'Bananen tros 5 stuks' });
     b.link('bananen', 'ah', perKg).link('bananen', 'jumbo', tros); // a wrong-dimension link is ignored
     b.price(perKg, 'ah', 219).price(tros, 'jumbo', 149);
+    b.cover('jumbo');
     const r = compareBaskets(input([item('bananen', 1, 'kg')], b.data));
     expect(store(r, 'ah').lines[0]!).toMatchObject({ status: 'verified', line_total_cents: 219 });
     expect(store(r, 'jumbo').lines[0]!).toMatchObject({ status: 'unknown', line_total_cents: null });
@@ -175,6 +179,7 @@ describe('Huismerk volkorenbrood: per-chain EAN, equivalence only via an explici
 
   test('without an explicit Jumbo link, the Jumbo huismerk price is not used', () => {
     const { b } = huismerk();
+    b.cover('jumbo');
     const r = compareBaskets(input([item('volkorenbrood')], b.data));
     expect(store(r, 'jumbo').lines[0]!.status).toBe('unknown');
     expect(store(r, 'ah')).toMatchObject({ complete: true, label: 'only_complete' });
@@ -192,6 +197,7 @@ describe('Huismerk volkorenbrood: per-chain EAN, equivalence only via an explici
     const { b, ahBrood } = huismerk();
     b.link('brood-volkoren-heel', 'jumbo', ahBrood);
     b.price(ahBrood, 'jumbo', 199); // bogus observation of an AH product at Jumbo
+    b.cover('jumbo');
     const r = compareBaskets(input([item('volkorenbrood')], b.data));
     expect(store(r, 'jumbo').lines[0]!.status).toBe('unknown');
   });

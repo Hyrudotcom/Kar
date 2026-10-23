@@ -28,12 +28,18 @@ export default function Root({ children }: { children: ReactNode }) {
   );
 }
 
+// One focus style for keyboard users (D-07/D-08): accent, rounded, only for keyboard focus. Text
+// inputs show focus on their rounded container instead (QuickAddBar), so they get no own outline.
 const responsiveBackground = `
 body {
   background-color: #fff;
 }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid #1E7A4C; outline-offset: 2px; }
+input:focus-visible, textarea:focus-visible { outline: none; }
 @media (prefers-color-scheme: dark) {
   body {
     background-color: #0F1110;
   }
+  :focus-visible { outline-color: #4CC38A; }
 }`;

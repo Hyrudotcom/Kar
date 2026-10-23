@@ -412,11 +412,16 @@ describe('errors and retries', () => {
     const outbox = await outboxRows(dev);
     server.retryIds.add(outbox[0]!.id);
     await dev.engine.syncNow();
-    expect(server.list(hh).map((i) => i.name)).toEqual(['Bloem']);
-    expect(dev.names()).toEqual(['Ananas:1', 'Bloem:1kg']); // still shown (pending)
+    // The server applies nothing after a 'retry' in the same batch (order is preserved).
+    expect(server.list(hh)).toEqual([]);
+    expect(dev.names().sort()).toEqual(['Ananas:1', 'Bloem:1kg']); // still shown (pending)
     expect((await outboxRows(dev))[0]).toMatchObject({ state: 'pending', attempts: 1 });
-    server.retryIds.clear();
+    // Next round: the failing row goes alone, so the unrelated row behind it gets through.
     await dev.clock.advance(1000);
+    await dev.engine.whenIdle();
+    expect(server.list(hh).map((i) => i.name)).toEqual(['Bloem']);
+    server.retryIds.clear();
+    await dev.clock.advance(5000);
     await dev.engine.whenIdle();
     expect(server.item(a.itemId)).toBeDefined();
   });
@@ -456,7 +461,8 @@ describe('errors and retries', () => {
     await dev.engine.setChecked(a.itemId, false); // must not overtake the pending check
     await dev.engine.syncNow();
     expect(server.item(a.itemId)!.checked).toBe(false);
-    expect(dev.transport.calls.filter((c) => c.fn === 'apply').length).toBe(2);
+    // syncNow retries the backed-off check right away (alone); the uncheck stays behind it.
+    expect(dev.transport.calls.filter((c) => c.fn === 'apply').map((c) => (c.req as { mutations: unknown[] }).mutations.length)).toEqual([1, 1, 1]);
     server.retryIds.clear();
     await dev.clock.advance(1000);
     await dev.engine.whenIdle();

@@ -181,6 +181,14 @@ export class LocalStore {
     ]);
   }
 
+  /** Counts a send attempt before the request goes out (attempts > 0 = may have reached the server). */
+  async markSent(ids: readonly Uuid[]): Promise<void> {
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      await this.db.run(`update outbox set attempts = attempts + 1 where id in (${chunk.map(() => '?').join(', ')})`, [...chunk]);
+    }
+  }
+
   updatePayload(id: Uuid, payload: Mutation['payload']): Promise<unknown> {
     return this.db.run('update outbox set payload = ? where id = ?', [JSON.stringify(payload), id]);
   }

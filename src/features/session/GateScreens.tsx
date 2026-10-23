@@ -9,7 +9,7 @@ import { sizes, spacing } from '@/src/ui/tokens';
 
 import { InviteCodeSheet } from '../auth/InviteCodeSheet';
 import { changesText } from './copy';
-import { useSession } from './SessionProvider';
+import { useSession, type UnavailableReason } from './SessionProvider';
 
 function Frame({ children }: { children: React.ReactNode }) {
   const c = useColors();
@@ -63,12 +63,26 @@ export function RemovedScreen() {
   );
 }
 
-/** First start without internet (design-spec 4.7). */
-export function NoInternetScreen() {
+const UNAVAILABLE_COPY: Record<UnavailableReason, { title: string; body: string; testID: string }> = {
+  /** First start without internet (design-spec 4.7). */
+  network: { title: 'Geen internet', body: 'Inloggen en lid worden kan alleen online.', testID: 'no-internet' },
+  server: { title: 'Er ging iets mis', body: 'We konden je lijst nu niet laden. Probeer het zo opnieuw.', testID: 'server-error' },
+  /** The local database could not be opened (locked, damaged or a full phone): not a network problem. */
+  local: {
+    title: 'Je lijst kon niet worden geopend',
+    body: 'Probeer het opnieuw. Lukt het niet, sluit de app dan helemaal af en controleer of je telefoon nog opslagruimte heeft.',
+    testID: 'local-error',
+  },
+};
+
+/** No list to show: no internet on first start, a server error, or the local database (D-01). */
+export function UnavailableScreen() {
   const session = useSession();
+  const reason = session.state.kind === 'unavailable' ? session.state.reason : 'network';
+  const copy = UNAVAILABLE_COPY[reason];
   return (
     <Frame>
-      <EmptyState title="Geen internet" body="Inloggen en lid worden kan alleen online." action={{ label: 'Opnieuw proberen', onPress: () => void session.retry() }} actionStyle="primary" testID="no-internet" />
+      <EmptyState title={copy.title} body={copy.body} action={{ label: 'Opnieuw proberen', onPress: () => void session.retry() }} actionStyle="primary" testID={copy.testID} />
       <TextButton label="Uitloggen" tone="muted" align="center" onPress={() => void session.signOut(true)} />
     </Frame>
   );
