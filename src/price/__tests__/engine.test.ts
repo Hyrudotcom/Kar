@@ -520,3 +520,38 @@ describe('line details (contract: promotion_valid_until, unit_price)', () => {
     expect(line.line_total_cents).toBeNull();
   });
 });
+
+describe('round 3: stale-only chains are ranked, independent of unrelated products', () => {
+  const summary = (r: ComparisonResult) => r.stores.map((s) => [s.chain_id, s.total_cents, s.label]);
+  const base = () => {
+    const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml');
+    b.simple('melk-halfvol', 'ah', 200, 1000, 'ml', daysAgo(1));
+    b.simple('melk-halfvol', 'jumbo', 210, 1000, 'ml', daysAgo(1));
+    b.simple('melk-halfvol', 'lidl', 100, 1000, 'ml', daysAgo(8));
+    return b;
+  };
+
+  test('a complete basket of only 7-14 day old prices is ranked (and can be cheapest)', () => {
+    const r = compareBaskets(input([item('melk')], base().data));
+    expect(summary(r)).toEqual([
+      ['lidl', 100, 'cheapest'],
+      ['ah', 200, null],
+      ['jumbo', 210, null],
+    ]);
+    expect(store(r, 'lidl').stale_count).toBe(1);
+  });
+
+  test('an unrelated fresh price at the stale chain does not change the result', () => {
+    const b = base().cover('lidl');
+    expect(summary(compareBaskets(input([item('melk')], b.data)))).toEqual(summary(compareBaskets(input([item('melk')], base().data))));
+  });
+
+  test('a chain with usable prices but none for the list shows as incomplete, never disappears', () => {
+    const b = new DatasetBuilder().catalog('melk-halfvol', ['melk'], 1000, 'ml');
+    b.simple('melk-halfvol', 'ah', 200, 1000, 'ml', daysAgo(1));
+    b.simple('melk-halfvol', 'jumbo', 210, 1000, 'ml', daysAgo(1));
+    b.cover('lidl');
+    const r = compareBaskets(input([item('melk')], b.data));
+    expect(store(r, 'lidl')).toMatchObject({ complete: false, total_cents: null, priced_count: 0 });
+  });
+});

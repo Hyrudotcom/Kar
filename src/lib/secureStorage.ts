@@ -20,9 +20,10 @@ export interface RawSecureStore {
   deleteItemAsync(key: string): Promise<void>;
 }
 
+/** THIS_DEVICE_ONLY: session tokens never move to another phone through an iCloud/Finder backup. */
 const systemStore: RawSecureStore = {
   getItemAsync: (k) => SecureStore.getItemAsync(k),
-  setItemAsync: (k, v) => SecureStore.setItemAsync(k, v, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK }),
+  setItemAsync: (k, v) => SecureStore.setItemAsync(k, v, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY }),
   deleteItemAsync: (k) => SecureStore.deleteItemAsync(k),
 };
 

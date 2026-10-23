@@ -177,7 +177,15 @@ export class FakeServer {
       this.deliveries.set(m.id, (this.deliveries.get(m.id) ?? 0) + 1);
       const logged = this.log.get(m.id);
       if (logged) {
-        results.push(logged.user_id === userId ? { ...logged.result, replayed: true } : { id: m.id, status: 'rejected', reason: 'invalid' });
+        // Like apply_mutations (round 3): a log entry of another household (the user switched) is
+        // reported as done here, never with the other household's item id or server_seq.
+        results.push(
+          logged.user_id !== userId
+            ? { id: m.id, status: 'rejected', reason: 'invalid' }
+            : logged.household_id === h.id
+              ? { ...logged.result, replayed: true }
+              : { id: m.id, status: 'applied', replayed: true },
+        );
         continue;
       }
       if (stopped || this.retryIds.has(m.id)) {

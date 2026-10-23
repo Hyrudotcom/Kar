@@ -7,7 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { AppState } from 'react-native';
 
 import { INVITE_CODE_REGEX, type HouseholdMember, type Uuid } from '@/src/contracts';
-import { KV_KEYS, type AppEngine, type AuthUser, type Backend, type HouseholdCallError } from '@/src/lib/backend/types';
+import { KV_KEYS, type AppEngine, type AuthUser, type Backend, type HouseholdApi, type HouseholdCallError } from '@/src/lib/backend/types';
 import { SyncEngineProvider } from '@/src/sync/hooks';
 
 import { useBackend } from './BackendContext';
@@ -68,6 +68,28 @@ interface CachedHousehold {
 }
 
 const cacheKey = (userId: Uuid) => `${KV_KEYS.householdCache}_${userId}`;
+/** "Je bent geen lid meer" survives a restart: the file is wiped, the notice and lost edits are not. */
+const removedKey = (userId: Uuid) => `removed_notice_${userId}`;
+
+type MembershipAnswer = Awaited<ReturnType<HouseholdApi['getMyHousehold']>>;
+
+interface RemovedNotice {
+  householdName: string;
+  failedCount: number;
+  failedText: string;
+}
+
+async function readRemovedNotice(backend: Backend, userId: Uuid): Promise<RemovedNotice | null> {
+  try {
+    const raw = await backend.kv.getItem(removedKey(userId));
+    const v = raw ? (JSON.parse(raw) as RemovedNotice) : null;
+    return v && typeof v.householdName === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 async function readCache(backend: Backend, userId: Uuid): Promise<CachedHousehold | null> {
   try {
@@ -110,9 +132,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   /** Set while leave / accept / delete account run: the engine's not_member answers are expected then. */
   const transitioning = useRef(false);
-  /** Single flight for the removal flow (engine listener, foreground check and establish can all detect it). */
+  /** Single flight for the membership check (engine listener, foreground check and establish can all start it). */
   const losing = useRef(false);
+  /** A check requested while one ran: it runs again afterwards with a fresh answer, never dropped. */
+  const recheck = useRef<{ user: AuthUser; householdName: string } | null>(null);
   const lastReopen = useRef(0);
+  /** Engines that got a not_member answer: they keep queueing edits but no longer sync. */
+  const lostEngines = useRef(new WeakSet<AppEngine>());
+  /** Retry of a membership check whose answer was unknown (timer with backoff, or back online). */
+  const memberRetry = useRef<{ timer: ReturnType<typeof setTimeout> | null; unsub: (() => void) | null; attempt: number }>({ timer: null, unsub: null, attempt: 0 });
+  const signingOut = useRef(false);
+
+  const clearRetry = useCallback(() => {
+    const r = memberRetry.current;
+    if (r.timer) clearTimeout(r.timer);
+    r.unsub?.();
+    r.timer = null;
+    r.unsub = null;
+  }, []);
 
   const stopEngine = useCallback(async () => {
     const e = engineRef.current;
@@ -135,6 +172,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!list.includes(userId)) await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify([...list, userId])).catch(() => undefined);
       }
       await backend.kv.removeItem(cacheKey(userId)).catch(() => undefined);
+      await backend.kv.removeItem(removedKey(userId)).catch(() => undefined);
     },
     [backend],
   );
@@ -149,13 +187,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   /** Assigned after `wipe` below; refs keep `establish` stable. */
-  const lostRef = useRef<(user: AuthUser, householdName: string) => Promise<void>>(async () => undefined);
+  const lostRef = useRef<(user: AuthUser, householdName: string, known?: MembershipAnswer) => Promise<void>>(async () => undefined);
 
   /** Loads (or silently creates) the household, opens the engine and goes to `ready`. */
   const establish = useCallback(
     async (user: AuthUser, opts: { skipAccountCheck?: boolean } = {}): Promise<void> => {
       const gen = ++generation.current;
       const stale = () => gen !== generation.current;
+      clearRetry();
 
       if (!opts.skipAccountCheck) {
         const last = await backend.kv.getItem(KV_KEYS.lastUserId).catch(() => null);
@@ -182,10 +221,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (stale()) return;
       }
 
+      // Removed while the app was closed after the notice was shown: show it again (4.6).
+      const notice = await readRemovedNotice(backend, user.id);
+      if (stale()) return;
+      if (notice) {
+        await stopEngine();
+        setState({ kind: 'removed', user, ...notice });
+        return;
+      }
+
       const cached = await readCache(backend, user.id);
       if (stale()) return;
 
-      /** `confirmed` = role and members come from get_my_household (only then is the role cached). */
+      /**
+       * Only without a cached household (first start, after removal, leave or a switch): ensure one.
+       * `confirmed` = role and members come from get_my_household (only then is the role cached).
+       */
       const fetchHousehold = async (): Promise<(HouseholdInfo & { confirmed: boolean }) | 'network' | 'server'> => {
         const ensured = await backend.households.createHousehold('Thuis');
         if (!ensured.ok) return ensured.error === 'network' ? 'network' : 'server';
@@ -234,6 +285,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       engineRef.current = engine;
       const hhName = household.name;
       engine.onMembershipLost(() => {
+        lostEngines.current.add(engine);
         if (transitioning.current) return;
         const s = stateRef.current;
         if (s.kind === 'ready' && s.engine === engine) void lostRef.current(user, s.household.name);
@@ -242,45 +294,56 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setState({ kind: 'ready', user, household, engine });
 
       if (refreshInBackground) {
-        const r = await fetchHousehold();
-        if (stale() || r === 'network' || r === 'server') return;
-        if (r.id !== household.id) {
-          await lostRef.current(user, household.name);
-          return;
-        }
-        await cache(r);
-        const s = stateRef.current;
-        const { confirmed, ...info } = r;
-        if (s.kind === 'ready' && s.engine === engine && confirmed) setState({ ...s, household: info });
+        // Membership check on every open (4.6). Never creates a household: a user removed while the
+        // app was closed must see the removal, not a fresh "Thuis" that swallows the offline edits.
+        const mine = await backend.households.getMyHousehold();
+        if (stale() || !mine.ok) return;
+        await lostRef.current(user, household.name, mine);
       }
     },
-    [backend, setState, stopEngine, wipeUser],
+    [backend, setState, stopEngine, wipeUser, clearRetry],
   );
 
-  const handleMembershipLost = async (user: AuthUser, householdName: string) => {
-    if (losing.current || transitioning.current || stateRef.current.kind === 'removed') return;
+  /**
+   * Decides what a membership answer means: still a member (refresh the info; reopen an engine that
+   * got not_member), switched household on another phone (reopen on the new one; start() re-addresses
+   * the outbox), or removed (stop, collect unsent edits, wipe, show the notice). An unknown answer is
+   * retried on a timer with backoff and at once when the connection comes back; meanwhile edits keep
+   * going into the outbox.
+   */
+  const checkMembership = async (user: AuthUser, householdName: string, known?: MembershipAnswer) => {
+    if (transitioning.current || stateRef.current.kind === 'removed') return;
+    if (losing.current) {
+      recheck.current = { user, householdName };
+      return;
+    }
     losing.current = true;
+    const gen = generation.current;
+    let retryIn: number | null = null;
     try {
-      // Removed, or did this user join another household on another phone? Only the server knows.
-      // A switch keeps the file: the next engine re-addresses the outbox to the new household.
-      const mine = await backend.households.getMyHousehold();
-      if (transitioning.current) return;
+      const mine = known ?? (await backend.households.getMyHousehold());
+      if (transitioning.current || gen !== generation.current) return;
       if (!mine.ok) {
-        // Unknown (no connection, server error): decide when the connection comes back.
-        let done = false;
-        const unsub = backend.connectivity.subscribe((online) => {
-          if (!online || done) return;
-          done = true;
-          queueMicrotask(() => unsub());
-          void lostRef.current(user, householdName);
-        });
+        retryIn = Math.min(60_000, 2_000 * 2 ** memberRetry.current.attempt++);
         return;
       }
+      memberRetry.current.attempt = 0;
       if (mine.household && mine.role) {
         const s = stateRef.current;
         if (s.kind === 'ready' && s.household.id === mine.household.id) {
+          if (!lostEngines.current.has(s.engine)) {
+            const household: HouseholdInfo = { id: mine.household.id, name: mine.household.name, role: mine.role, members: mine.members };
+            await backend.kv.setItem(cacheKey(user.id), JSON.stringify({ id: household.id, name: household.name, role: household.role })).catch(() => undefined);
+            const now = stateRef.current;
+            if (now.kind === 'ready' && now.engine === s.engine) setState({ ...now, household });
+            return;
+          }
           // Still a member of this very household (a not_member raced a re-join): reopen, but never in a loop.
-          if (Date.now() - lastReopen.current < 60_000) return;
+          const wait = lastReopen.current + 60_000 - Date.now();
+          if (wait > 0) {
+            retryIn = wait;
+            return;
+          }
           lastReopen.current = Date.now();
         }
         await backend.kv
@@ -290,6 +353,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return;
       }
       generation.current++;
+      clearRetry();
       const e = engineRef.current;
       engineRef.current = null;
       let unsent = { count: 0, text: '' };
@@ -300,13 +364,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         unsent = e.unsent();
       }
       await wipeUser(user.id, e);
-      setState({ kind: 'removed', user, householdName, failedCount: unsent.count, failedText: unsent.text });
+      const notice: RemovedNotice = { householdName, failedCount: unsent.count, failedText: unsent.text };
+      await backend.kv.setItem(removedKey(user.id), JSON.stringify(notice)).catch(() => undefined);
+      setState({ kind: 'removed', user, ...notice });
     } finally {
       losing.current = false;
+      if (retryIn !== null && gen === generation.current) {
+        clearRetry();
+        const again = () => {
+          if (gen !== generation.current) return;
+          clearRetry();
+          void lostRef.current(user, householdName);
+        };
+        memberRetry.current.timer = setTimeout(again, retryIn);
+        memberRetry.current.unsub = backend.connectivity.subscribe((online) => {
+          if (online) queueMicrotask(again);
+        });
+      }
+      const next = recheck.current;
+      recheck.current = null;
+      if (next) void lostRef.current(next.user, next.householdName);
     }
   };
   useLayoutEffect(() => {
-    lostRef.current = handleMembershipLost;
+    lostRef.current = checkMembership;
   });
 
   // Boot + auth changes.
@@ -359,23 +440,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, [backend, establish, setState, stopEngine]);
 
-  // Stop the engine on unmount.
-  useEffect(() => () => void stopEngine(), [stopEngine]);
+  // Stop the engine and any membership retry on unmount.
+  useEffect(
+    () => () => {
+      generation.current++;
+      clearRetry();
+      void stopEngine();
+    },
+    [stopEngine, clearRetry],
+  );
 
   const refreshHousehold = useCallback(async () => {
     const s = stateRef.current;
     if (s.kind !== 'ready') return;
     const mine = await backend.households.getMyHousehold();
     const now = stateRef.current;
-    if (now.kind !== 'ready' || now.engine !== s.engine || !mine.ok) return;
-    if (!mine.household || mine.household.id !== s.household.id || !mine.role) {
-      await lostRef.current(s.user, s.household.name);
-      return;
-    }
-    const household: HouseholdInfo = { id: mine.household.id, name: mine.household.name, role: mine.role, members: mine.members };
-    await backend.kv.setItem(cacheKey(s.user.id), JSON.stringify({ id: household.id, name: household.name, role: household.role })).catch(() => undefined);
-    setState({ ...now, household });
-  }, [backend, setState]);
+    if (now.kind !== 'ready' || now.engine !== s.engine) return;
+    if (!mine.ok && !lostEngines.current.has(s.engine)) return; // unknown, nothing lost: next foreground
+    await lostRef.current(s.user, s.household.name, mine);
+  }, [backend]);
 
   // Membership check on every foreground (design-spec 4.6), engine foreground hint.
   useEffect(() => {
@@ -400,9 +483,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(
     async (force = false): Promise<ActionResult> => {
       const s = stateRef.current;
-      if (!force && s.kind === 'ready') {
-        // Try to deliver first; then ask about what is still unsent or failed (both are deleted).
-        if (backend.connectivity.isOnline()) await s.engine.syncNow();
+      if (signingOut.current) return { ok: false, error: 'pending', pending: 0 };
+      if (!force && s.kind === 'ready' && s.engine.unsent().count > 0) {
+        // Something is unsent: one short, bounded attempt to deliver it (never a blocking pull when
+        // nothing is pending), then ask about what is still unsent or failed (both are deleted).
+        signingOut.current = true;
+        try {
+          if (backend.connectivity.isOnline()) await Promise.race([s.engine.syncNow(), delay(3_000)]);
+        } finally {
+          signingOut.current = false;
+        }
         const pending = s.engine.unsent().count;
         if (pending > 0) return { ok: false, error: 'pending', pending };
       }
@@ -498,8 +588,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const continueAfterRemoval = useCallback(async () => {
     const s = stateRef.current;
     if (s.kind !== 'removed') return;
+    await backend.kv.removeItem(removedKey(s.user.id)).catch(() => undefined);
     await establish(s.user, { skipAccountCheck: true });
-  }, [establish]);
+  }, [backend, establish]);
 
   const confirmSwitchAccount = useCallback(async () => {
     const s = stateRef.current;
@@ -510,10 +601,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const cancelSwitchAccount = useCallback(async () => {
     generation.current++;
-    await setPendingInvite(null);
+    // The invite code stays: it was opened by the person at this phone, who now signs in again.
     setState({ kind: 'signedOut' });
     await backend.auth.signOut();
-  }, [backend, setState, setPendingInvite]);
+  }, [backend, setState]);
 
   const retry = useCallback(async () => {
     const s = stateRef.current;

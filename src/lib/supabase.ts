@@ -6,6 +6,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
 
 import { env } from './env';
+import { fetchWithTimeout } from './fetchWithTimeout';
 import { createChunkedStorage } from './secureStorage';
 
 let client: SupabaseClient | null = null;
@@ -21,6 +22,7 @@ export function getSupabase(): SupabaseClient {
       detectSessionInUrl: false,
       flowType: 'pkce',
     },
+    global: { fetch: fetchWithTimeout() },
   });
   if (Platform.OS !== 'web') {
     const c = client;

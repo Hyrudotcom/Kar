@@ -50,3 +50,17 @@ describe('chunked SecureStore session storage', () => {
     expect(safeKey('sb:abc/auth token')).toBe('sb_abc_auth_token');
   });
 });
+
+describe('round 3: keychain class', () => {
+  it('stores secrets for this device only (not in backups)', async () => {
+    const SecureStore = require('expo-secure-store');
+    const spy = jest.spyOn(SecureStore, 'setItemAsync').mockResolvedValue(undefined);
+    try {
+      await createChunkedStorage().setItem('k', 'v');
+      for (const call of spy.mock.calls) expect(call[2]).toEqual({ keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY });
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

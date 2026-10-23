@@ -23,6 +23,8 @@ export interface BottomSheetProps {
   onClose: () => void;
   /** Optional sheet title (title typography). */
   title?: string;
+  /** Pinned under the title (does not scroll), with a hairline below it (D3-15). */
+  header?: ReactNode;
   children?: ReactNode;
   testID?: string;
   /** Screen-reader name of the sheet when there is no title. */
@@ -32,7 +34,7 @@ export interface BottomSheetProps {
 const CLOSE_DISTANCE = 80;
 
 /** Bottom sheet on `surfaceRaised` with a top radius of 20 (design-spec 3). */
-export function BottomSheet({ visible, onClose, title, children, testID, accessibilityLabel }: BottomSheetProps) {
+export function BottomSheet({ visible, onClose, title, header, children, testID, accessibilityLabel }: BottomSheetProps) {
   const c = useColors();
   const scheme = useScheme();
   const insets = useSafeAreaInsets();
@@ -92,7 +94,9 @@ export function BottomSheet({ visible, onClose, title, children, testID, accessi
                 {title}
               </AppText>
             ) : null}
+            {header}
           </View>
+          {header ? <View style={[styles.headerLine, { backgroundColor: c.border }]} /> : null}
           <ScrollView keyboardShouldPersistTaps="handled" bounces={false} contentContainerStyle={styles.content}>
             {children}
           </ScrollView>
@@ -118,5 +122,6 @@ const styles = StyleSheet.create({
   grabZone: { paddingTop: spacing.sm, paddingHorizontal: sizes.sideMargin, minHeight: 28 },
   grabber: { alignSelf: 'center', width: 36, height: 5, borderRadius: 3, marginBottom: spacing.md },
   title: { marginBottom: spacing.sm },
+  headerLine: { height: StyleSheet.hairlineWidth, marginTop: spacing.sm },
   content: { paddingHorizontal: sizes.sideMargin, paddingBottom: spacing.sm, gap: spacing.md },
 });

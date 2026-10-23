@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { Keyboard, StyleSheet } from 'react-native';
 
 import { flush, makeBackend, renderReady, signIn } from '../../__tests__/helpers';
 import { ListScreen } from '../ListScreen';
@@ -228,5 +229,33 @@ describe('Mijn lijst', () => {
       });
     });
     expect(await screen.findByLabelText('Melk, 4, lactosevrij. Niet afgevinkt.')).toBeTruthy();
+  });
+});
+
+describe('round 3: undo snackbar above the keyboard', () => {
+  it('moves the snackbar above an open keyboard while adding items', async () => {
+    const handlers = new Map<string, ((e: unknown) => void)[]>();
+    const spy = jest.spyOn(Keyboard, 'addListener').mockImplementation(((event: string, fn: (e: unknown) => void) => {
+      handlers.set(event, [...(handlers.get(event) ?? []), fn]);
+      return { remove: () => undefined } as never;
+    }) as never);
+    try {
+      await setup();
+      const fire = async (event: string, e?: unknown) => {
+        await act(async () => {
+          for (const fn of handlers.get(event) ?? []) fn(e);
+        });
+      };
+      await fire('keyboardDidShow', { endCoordinates: { height: 320 } });
+      await type('melk');
+      await type('melk');
+      expect(screen.getByText('Melk +1')).toBeTruthy();
+      const bottom = () => StyleSheet.flatten(screen.getByTestId('snackbar-host').props.style).bottom as number;
+      expect(bottom()).toBeGreaterThanOrEqual(320);
+      await fire('keyboardDidHide');
+      expect(bottom()).toBeLessThan(320);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

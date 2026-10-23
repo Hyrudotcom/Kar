@@ -153,7 +153,9 @@ describe('format (Dutch)', () => {
     expect(formatLineAmount(ln({}))).toBe('€7,18');
     expect(formatLineAmount(ln({ status: 'unknown', line_total_cents: null }))).toBe('Geen prijs');
     expect(formatLineAmount(ln({ status: 'unknown', line_total_cents: 0 }))).toBe('Geen prijs');
-    expect(formatPackages(ln({}))).toBe('2×');
+    // D3-02: never "2×" next to a line total (reads as 2 × the amount).
+    expect(formatPackages(ln({}))).toBe('2 stuks');
+    expect(formatPackages(ln({ package_count: 1 }))).toBeNull();
     expect(formatPackages(ln({ package_count: null }))).toBeNull();
     expect(formatOverage(ln({ overage: { amount: 100, unit: 'g' } }))).toBe('600 g, 100 g meer');
     expect(formatOverage(ln({}))).toBeNull();
@@ -165,7 +167,8 @@ describe('format (Dutch)', () => {
     expect(formatPromotion(ln({}))).toBeNull();
     expect(formatPromotion(ln({ promotion_applied: true, promotion_valid_until: new Date(2026, 9, 26, 12).toISOString() }))).toBe('Actie t/m ma 26 okt');
     expect(formatPromotion(ln({ promotion_applied: true, promotion_valid_until: null }))).toBe('Actie');
-    expect(formatAge(ln({ status: 'stale', age_days: 4 }))).toBe('4 d oud');
+    expect(formatAge(ln({ status: 'stale', age_days: 4 }))).toBe('4 dagen oud');
+    expect(formatAge(ln({ status: 'stale', age_days: 1 }))).toBe('1 dag oud');
     expect(formatAge(ln({ status: 'verified', age_days: 4 }))).toBeNull();
     expect(formatAmount(1500, 'g')).toBe('1,5 kg');
     expect(formatAmount(570, 'ml')).toBe('570 ml');
@@ -176,9 +179,9 @@ describe('format (Dutch)', () => {
 
   test('result header', () => {
     const r = { compared_count: 12, excluded_count: 0, oldest_price_age_days: 4 } as ComparisonResult;
-    expect(formatResultHeader(r)).toBe('12 items · oudste prijs 4 d');
-    expect(formatResultHeader({ ...r, compared_count: 11, excluded_count: 1 })).toBe('11 van 12 items vergeleken · 1 uitgesloten · oudste prijs 4 d');
-    expect(formatResultHeader({ ...r, compared_count: 1, oldest_price_age_days: null })).toBe('1 item');
+    expect(formatResultHeader(r)).toBe('12 producten · oudste prijs 4 dagen oud');
+    expect(formatResultHeader({ ...r, compared_count: 11, excluded_count: 1 })).toBe('11 van 12 producten vergeleken · 1 uitgesloten · oudste prijs 4 dagen oud');
+    expect(formatResultHeader({ ...r, compared_count: 1, oldest_price_age_days: null })).toBe('1 product');
   });
 
   test('unavailable copy', () => {

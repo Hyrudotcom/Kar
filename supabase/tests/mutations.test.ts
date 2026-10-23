@@ -11,6 +11,7 @@ import {
   closePool,
   createHousehold,
   itemRow,
+  joinViaInvite,
   lastSeq,
   mutation,
   pool,
@@ -193,6 +194,25 @@ describe('idempotent replay', () => {
     expect(rowAfterFirst.quantity).toBe('4.000');
     expect(await lastSeq(H.hid)).toBe(seq);
     expect(second.server_seq).toBe(seq);
+  });
+
+  test('round 3: after a household switch the old household result is never replayed (no foreign ids or seq)', async () => {
+    const A = await createHousehold(); // Anna alone, with some history (high seq)
+    const B = await createHousehold(); // Bram
+    for (let i = 0; i < 5; i++) await addItem(A.owner, A.hid, `Ding ${i}`);
+    const bramBrood = await addItem(B.owner, B.hid, 'Brood');
+    const m = add(A.hid, 'Brood', 2);
+    const first = await apply(A.owner, A.hid, [m]); // applied, but the response was lost
+    expect(first.results[0].status).toBe('applied');
+    const joined = await joinViaInvite(B.hid, B.owner, A.owner); // her other phone joins Bram
+    expect(joined.ok).toBe(true);
+    const seqB = await lastSeq(B.hid);
+    // This phone re-sends its outbox, re-addressed to the new household, with the same id.
+    const again = await apply(A.owner, B.hid, [{ ...m, household_id: B.hid }]);
+    expect(again.results).toEqual([{ id: m.id, status: 'applied', replayed: true }]);
+    expect(again.server_seq).toBe(seqB);
+    expect(await lastSeq(B.hid)).toBe(seqB); // nothing applied twice
+    expect((await itemRow(bramBrood)).quantity).toBe('3.000');
   });
 
   test('duplicate mutation id inside one batch is applied once', async () => {

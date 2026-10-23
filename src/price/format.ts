@@ -57,7 +57,13 @@ export function formatMissing(b: StoreBasket): string {
 
 /** "4 d oud" for stale lines; null for verified/unknown lines. */
 export function formatAge(line: BasketLine): string | null {
-  return line.status === 'stale' && line.age_days !== null ? `${line.age_days} d oud` : null;
+  return line.status === 'stale' && line.age_days !== null ? daysOld(line.age_days) : null;
+}
+
+/** "1 dag oud", "9 dagen oud", "van vandaag" (no "9 d": not Dutch in running text, D3-11). */
+export function daysOld(days: number): string {
+  if (days <= 0) return 'van vandaag';
+  return days === 1 ? '1 dag oud' : `${days} dagen oud`;
 }
 
 /** Store row subtitle: "Goedkoopste · 1 verouderd", "Enige complete mand", "1 verouderd" or null. */
@@ -81,9 +87,12 @@ export function formatAmount(amount: number, unit: BaseUnit): string {
   return `${decimalNl(amount)} ${amount === 1 ? 'stuk' : 'stuks'}`;
 }
 
-/** Item line packaging: "2×", or null when there is no price. */
+/**
+ * Item line packaging: "2 stuks" when more than one package is needed, else null. Never "2×" next to
+ * the amount: "2× €2,38" reads as 2 × €2,38 while €2,38 is the line total (D3-02).
+ */
 export function formatPackages(line: BasketLine): string | null {
-  return line.package_count === null ? null : `${line.package_count}×`;
+  return line.package_count === null || line.package_count <= 1 ? null : `${line.package_count} stuks`;
 }
 
 /** "600 g, 100 g meer" (only set when the engine reported > 25% overage). */
@@ -113,15 +122,15 @@ export function formatLineAmount(line: BasketLine): string {
   return line.status !== 'unknown' && line.line_total_cents !== null ? formatCents(line.line_total_cents) : PRICE_COPY.noPrice;
 }
 
-/** Header: "12 items · oudste prijs 4 d" or "11 van 12 items vergeleken · 1 uitgesloten". */
+/** Header: "12 producten · oudste prijs 4 dagen oud" or "11 van 12 producten vergeleken · 1 uitgesloten". */
 export function formatResultHeader(r: ComparisonResult): string {
   const total = r.compared_count + r.excluded_count;
   const parts: string[] = [];
   if (r.excluded_count > 0) {
-    parts.push(`${r.compared_count} van ${total} items vergeleken`, `${r.excluded_count} uitgesloten`);
+    parts.push(`${r.compared_count} van ${total} producten vergeleken`, `${r.excluded_count} uitgesloten`);
   } else {
-    parts.push(`${r.compared_count} ${r.compared_count === 1 ? 'item' : 'items'}`);
+    parts.push(`${r.compared_count} ${r.compared_count === 1 ? 'product' : 'producten'}`);
   }
-  if (r.oldest_price_age_days !== null) parts.push(`oudste prijs ${r.oldest_price_age_days} d`);
+  if (r.oldest_price_age_days !== null) parts.push(`oudste prijs ${daysOld(r.oldest_price_age_days)}`);
   return parts.join(' · ');
 }

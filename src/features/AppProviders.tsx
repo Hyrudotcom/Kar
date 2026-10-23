@@ -7,17 +7,23 @@ import { SnackbarProvider } from './feedback/SnackbarProvider';
 import { JoinInviteSheet } from './household/JoinInviteSheet';
 import { PriceProvider } from './route/PriceContext';
 import { BackendProvider } from './session/BackendContext';
-import { SessionProvider } from './session/SessionProvider';
+import { SessionProvider, useSession } from './session/SessionProvider';
+
+/** The snackbar is cleared whenever the session leaves `ready` or its engine changes. */
+function SessionSnackbar({ children }: { children: ReactNode }) {
+  const { state } = useSession();
+  return <SnackbarProvider resetKey={state.kind === 'ready' ? state.engine : state.kind}>{children}</SnackbarProvider>;
+}
 
 export function AppProviders({ backend, children }: { backend: Backend; children: ReactNode }) {
   return (
     <BackendProvider backend={backend}>
       <SessionProvider>
         <PriceProvider>
-          <SnackbarProvider>
+          <SessionSnackbar>
             {children}
             <JoinInviteSheet />
-          </SnackbarProvider>
+          </SessionSnackbar>
         </PriceProvider>
       </SessionProvider>
     </BackendProvider>

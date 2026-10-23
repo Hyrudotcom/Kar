@@ -100,7 +100,9 @@ test('(e) sign up -> Thuis -> invite -> partner joins -> both edit -> partner le
     ok: true,
     household_id: hh,
     household_name: 'Thuis',
-    inviter_name: anna.email.split('@')[0],
+    // Anna signed up with an e-mail code only: her name is the address's local part, which is never
+    // shown to someone holding just the code (round 3).
+    inviter_name: '',
     member_count: 1,
     leaves_current_household: false,
   });

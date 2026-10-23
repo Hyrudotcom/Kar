@@ -247,17 +247,6 @@ export class LocalStore {
   }
 
   /** clear_checked results whose payload contained itemId (used to make undo of "Wissen" exact). */
-  async clearResultsContaining(itemId: Uuid): Promise<MutationResult[]> {
-    const rows = await this.db.all<Row>("select payload, result from acked_log where kind = 'clear_checked'");
-    const out: MutationResult[] = [];
-    for (const r of rows) {
-      const p = parseJson<{ item_ids: string[] }>(r.payload);
-      const res = parseJson<MutationResult>(r.result);
-      if (p?.item_ids?.includes(itemId) && res) out.push(res);
-    }
-    return out;
-  }
-
   pruneAckLog(before: number): Promise<unknown> {
     return this.db.run('delete from acked_log where acked_at < ?', [before]);
   }

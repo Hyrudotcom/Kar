@@ -114,27 +114,43 @@ export function PeopleIcon({ size = 24, color = 'text', style }: IconProps) {
   return <Box size={size} style={style}>{[person(size * 0.2, 0.85, 'b'), person(-size * 0.12, 1, 'a')]}</Box>;
 }
 
-/** Offline: cloud with a strike. */
-export function CloudOffIcon({ size = 24, color = 'textMuted', style }: IconProps) {
-  const c = useColors()[color];
+/**
+ * Offline: a SOLID cloud with a strike (like Material "cloud_off"). Filled shapes merge into one
+ * clean silhouette, so no inner arcs show (D3-01: the outlined version read as "eye-off"). The strike
+ * is cut out of the cloud with a background-coloured band, then drawn in the icon colour.
+ */
+export function CloudOffIcon({ size = 24, color = 'text', style }: IconProps) {
+  const colors = useColors();
+  const c = colors[color];
+  const fill = (left: number, top: number, w: number, h: number, r: number) => ({
+    position: 'absolute' as const,
+    left: size * left,
+    top: size * top,
+    width: size * w,
+    height: size * h,
+    borderRadius: size * r,
+    backgroundColor: c,
+  });
+  const line = (w: number, bg: string) => ({
+    position: 'absolute' as const,
+    left: size * 0.05,
+    top: size / 2 - w / 2,
+    width: size * 0.9,
+    height: w,
+    borderRadius: w / 2,
+    backgroundColor: bg,
+    transform: [{ rotate: '45deg' }],
+  });
   return (
     <Box size={size} style={style}>
-      <View style={{ position: 'absolute', top: size * 0.36, width: size * 0.82, height: size * 0.38, borderRadius: size * 0.2, borderWidth: STROKE, borderColor: c }} />
-      <View
-        style={{
-          position: 'absolute',
-          top: size * 0.18,
-          left: size * 0.3,
-          width: size * 0.42,
-          height: size * 0.42,
-          borderRadius: size,
-          borderWidth: STROKE,
-          borderColor: c,
-          borderBottomColor: 'transparent',
-          transform: [{ rotate: '-20deg' }],
-        }}
-      />
-      <View style={{ position: 'absolute', width: size * 1.0, height: STROKE + 0.5, backgroundColor: c, transform: [{ rotate: '-45deg' }] }} />
+      <View testID="cloud-off-glyph" style={{ position: 'absolute', width: size, height: size }}>
+        <View style={fill(0.08, 0.46, 0.84, 0.34, 0.17)} />
+        <View style={fill(0.24, 0.2, 0.44, 0.44, 0.22)} />
+        <View style={fill(0.52, 0.34, 0.3, 0.3, 0.15)} />
+        <View style={fill(0.1, 0.4, 0.26, 0.26, 0.13)} />
+        <View style={line(STROKE + 3, colors.bg)} />
+        <View style={line(STROKE + 0.25, c)} />
+      </View>
     </Box>
   );
 }

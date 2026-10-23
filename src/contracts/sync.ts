@@ -124,7 +124,8 @@ export type UndoAction =
    * restored -> set_checked(target, true) + update_item quantity back to the previous value.
    */
   | { kind: 'revert_add'; mutationId: Uuid }
-  | { kind: 'restore_item'; itemId: Uuid }
+  /** `clearMutationId`: undo of "Wissen"; the item is restored only if that very clear removed it. */
+  | { kind: 'restore_item'; itemId: Uuid; clearMutationId?: Uuid }
   | { kind: 'delete_item'; itemId: Uuid }
   | { kind: 'set_checked'; itemId: Uuid; checked: boolean }
   | { kind: 'increment_quantity'; itemId: Uuid; delta: number }

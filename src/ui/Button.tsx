@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 
 import { AppText } from './Text';
 import { useColors } from './theme';
 import { radius, sizes, spacing, type ColorToken } from './tokens';
+
+/** Web only: the browser's own (orange) focus ring becomes an accent ring (D3-03). */
+const focusRing = (accent: string): ViewStyle | null => (Platform.OS === 'web' ? { outlineColor: accent } : null);
 
 interface BaseProps extends Omit<PressableProps, 'children' | 'style'> {
   label: string;
@@ -23,10 +26,20 @@ export function PrimaryButton({ label, disabled, busy, style, ...rest }: BasePro
       {...rest}
       style={({ pressed }) => [
         styles.primary,
-        { backgroundColor: c.accent, opacity: inactive ? 0.5 : pressed ? 0.85 : 1 },
+        focusRing(c.accent),
+        // Disabled reads as disabled in both themes (D3-05): a neutral fill, never a dimmed accent.
+        disabled && !busy
+          ? { backgroundColor: c.surface, borderWidth: 1, borderColor: c.border }
+          : { backgroundColor: c.accent, opacity: busy ? 0.7 : pressed ? 0.85 : 1 },
         style,
       ]}>
-      {busy ? <ActivityIndicator color={c.onAccent} /> : <AppText variant="bodyStrong" color="onAccent" align="center">{label}</AppText>}
+      {busy ? (
+        <ActivityIndicator color={c.onAccent} />
+      ) : (
+        <AppText variant="bodyStrong" color={disabled ? 'textDisabled' : 'onAccent'} align="center">
+          {label}
+        </AppText>
+      )}
     </Pressable>
   );
 }
@@ -44,6 +57,7 @@ export function OutlineButton({ label, disabled, busy, style, ...rest }: BasePro
       {...rest}
       style={({ pressed }) => [
         styles.primary,
+        focusRing(c.accent),
         { borderWidth: 1, borderColor: c.border, backgroundColor: pressed ? c.surface : c.bg, opacity: inactive ? 0.5 : 1 },
         style,
       ]}>
@@ -59,9 +73,11 @@ export function TextButton({
   disabled,
   style,
   align = 'left',
+  size = 'body',
   ...rest
-}: BaseProps & { tone?: 'accent' | 'danger' | 'muted' | 'text'; align?: 'left' | 'center' | 'right' }) {
+}: BaseProps & { tone?: 'accent' | 'danger' | 'muted' | 'text'; align?: 'left' | 'center' | 'right'; size?: 'body' | 'callout' }) {
   const color: ColorToken = disabled ? 'textDisabled' : tone === 'muted' ? 'textMuted' : tone;
+  const c = useColors();
   return (
     <Pressable
       accessibilityRole="button"
@@ -72,10 +88,11 @@ export function TextButton({
       {...rest}
       style={({ pressed }) => [
         styles.text,
+        focusRing(c.accent),
         { alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start', opacity: pressed ? 0.6 : 1 },
         style,
       ]}>
-      <AppText variant="body" color={color} style={tone !== 'text' ? styles.textLabel : undefined}>
+      <AppText variant={size} color={color} style={tone !== 'text' ? styles.textLabel : undefined}>
         {label}
       </AppText>
     </Pressable>
@@ -84,13 +101,14 @@ export function TextButton({
 
 /** Icon-only button; `label` is the accessibility label (never icon-only for screen readers). */
 export function IconButton({ label, children, style, ...rest }: BaseProps & { children: ReactNode }) {
+  const c = useColors();
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={4}
       {...rest}
-      style={({ pressed }) => [styles.icon, { opacity: pressed ? 0.6 : 1 }, style]}>
+      style={({ pressed }) => [styles.icon, focusRing(c.accent), { opacity: pressed ? 0.6 : 1 }, style]}>
       <View pointerEvents="none">{children}</View>
     </Pressable>
   );

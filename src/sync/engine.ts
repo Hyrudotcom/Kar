@@ -466,7 +466,7 @@ class Engine implements GoedSyncEngine {
         const { sim, out } = this.simulate(m);
         await this.persist(m, { outcome: 'updated' }, out);
         for (const id of sim.affectedIds ?? []) {
-          results.push({ itemId: id, outcome: 'updated', undo: [{ kind: 'restore_item', itemId: id }], itemName: out.items.get(id)?.name ?? '' });
+          results.push({ itemId: id, outcome: 'updated', undo: [{ kind: 'restore_item', itemId: id, clearMutationId: m.id }], itemName: out.items.get(id)?.name ?? '' });
         }
       }
       return results;
@@ -481,7 +481,7 @@ class Engine implements GoedSyncEngine {
           break;
         case 'restore_item': {
           await this.ready;
-          if (await this.lock.run(() => this.clearSkippedItem(a.itemId))) break;
+          if (a.clearMutationId && (await this.lock.run(() => this.clearSkippedItem(a.clearMutationId!, a.itemId)))) break;
           await this.restoreItem(a.itemId);
           break;
         }
@@ -562,8 +562,13 @@ class Engine implements GoedSyncEngine {
     return this.lock.run(fn);
   }
 
+  /**
+   * Commands keep going into the outbox after a not_member answer: until the session knows whether
+   * the user was removed (unsent() lists them) or switched household (the next engine re-addresses
+   * them), an edit must never be dropped silently.
+   */
   private accepting(): boolean {
-    return !this.stopped && !this.membershipLost;
+    return !this.stopped;
   }
 
   private resolve(id: Uuid): Uuid {
@@ -722,15 +727,15 @@ class Engine implements GoedSyncEngine {
     return [this.mutation('delete_item', { item_id: target })];
   }
 
-  /** Undo of "Wissen": true when the server did not tombstone this id for our clear (someone else did). */
-  private async clearSkippedItem(itemId: Uuid): Promise<boolean> {
-    const pendingClear = this.outbox.some(
-      (e) => e.mutation.kind === 'clear_checked' && e.state === 'pending' && e.mutation.payload.item_ids.includes(itemId),
-    );
-    if (pendingClear) return false;
-    const results = await this.store.clearResultsContaining(itemId);
-    if (results.length === 0) return false;
-    return results.every((r) => !(r.affected_ids ?? []).includes(itemId));
+  /**
+   * Undo of "Wissen": true when the server did not tombstone this id for THIS clear (someone else
+   * deleted it first). Only that clear's own result decides; older clears of the same id do not.
+   */
+  private async clearSkippedItem(clearMutationId: Uuid, itemId: Uuid): Promise<boolean> {
+    const log = await this.store.getAckLog(clearMutationId);
+    if (!log || log.kind !== 'clear_checked') return false; // still pending: restore after it
+    const ids = (log.result.affected_ids ?? []).map((i) => this.resolve(i));
+    return !ids.includes(this.resolve(itemId));
   }
 
   // -------------------------------------------------------------------------

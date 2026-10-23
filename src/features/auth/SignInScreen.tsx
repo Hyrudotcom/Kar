@@ -97,10 +97,10 @@ export function SignInScreen() {
       <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
-            <AppText variant="title" align="center" accessibilityRole="header">
+            <AppText variant="title" accessibilityRole="header">
               Goedboodschap
             </AppText>
-            <AppText variant="callout" color="textMuted" align="center">
+            <AppText variant="callout" color="textMuted">
               Samen één boodschappenlijst
             </AppText>
           </View>
@@ -143,13 +143,18 @@ export function SignInScreen() {
             <PrimaryButton label="Stuur code" onPress={() => void sendCode()} busy={busy === 'email'} disabled={!!busy && busy !== 'email'} />
           </View>
           <View style={styles.foot}>
-            <AppText variant="footnote" color="textMuted">
-              Door verder te gaan ga je akkoord met de voorwaarden en het privacybeleid.
+            {/* The words in the sentence are the links (D3-08): no repeated grey labels, one link style. */}
+            <AppText variant="footnote" color="textMuted" style={styles.legal}>
+              {'Door verder te gaan ga je akkoord met de '}
+              <AppText variant="footnote" color="accent" style={styles.link} accessibilityRole="link" accessibilityLabel="Voorwaarden" onPress={() => void Linking.openURL(LEGAL_URLS.terms)}>
+                voorwaarden
+              </AppText>
+              {' en het '}
+              <AppText variant="footnote" color="accent" style={styles.link} accessibilityRole="link" accessibilityLabel="Privacybeleid" onPress={() => void Linking.openURL(LEGAL_URLS.privacy)}>
+                privacybeleid
+              </AppText>
+              .
             </AppText>
-            <View style={styles.links}>
-              <TextButton label="Voorwaarden" tone="muted" accessibilityRole="link" onPress={() => void Linking.openURL(LEGAL_URLS.terms)} />
-              <TextButton label="Privacybeleid" tone="muted" accessibilityRole="link" onPress={() => void Linking.openURL(LEGAL_URLS.privacy)} />
-            </View>
             {session.pendingInvite ? (
               <AppText variant="footnote" color="textMuted" testID="pending-invite">
                 {`Code ${session.pendingInvite} bewaard. Log in om lid te worden.`}
@@ -321,13 +326,15 @@ export function CodeStep({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: sizes.sideMargin + spacing.sm, paddingVertical: spacing.xxl, gap: spacing.xl, maxWidth: 480, width: '100%', alignSelf: 'center' },
+  // One alignment (left) and the app's 16 pt side margin on both steps, top-aligned (D3-09, D3-18).
+  scroll: { flexGrow: 1, justifyContent: 'flex-start', paddingHorizontal: sizes.sideMargin, paddingTop: spacing.xxl * 2, paddingBottom: spacing.xxl, gap: spacing.xl, maxWidth: 480, width: '100%', alignSelf: 'center' },
   head: { gap: spacing.xs, marginBottom: spacing.sm },
   stack: { gap: spacing.md },
   or: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   orLine: { flex: 1 },
   foot: { gap: spacing.xs },
-  links: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' },
+  legal: { paddingVertical: spacing.sm },
+  link: { textDecorationLine: 'underline' },
   countdown: { minHeight: sizes.minTouch, textAlignVertical: 'center', paddingVertical: spacing.md },
   cells: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.sm },
   cell: { flex: 1, minHeight: 56, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, maxWidth: 56 },

@@ -5,13 +5,13 @@
  */
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LIMITS, type HouseholdMember } from '@/src/contracts';
 import { inviteMessage, shareText } from '@/src/lib/share';
-import { AppText, ChevronIcon, ConfirmSheet, IconButton, PrimaryButton, TextButton, TextField, useColors } from '@/src/ui';
-import { sizes, spacing } from '@/src/ui/tokens';
+import { AppText, ChevronIcon, ConfirmSheet, Divider, IconButton, PrimaryButton, TextButton, TextField, useColors } from '@/src/ui';
+import { palette, sizes, spacing } from '@/src/ui/tokens';
 
 import { useSnackbar } from '../feedback/SnackbarProvider';
 import { usePrices } from '../route/PriceContext';
@@ -50,6 +50,7 @@ export function HouseholdScreen() {
   const [sharing, setSharing] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [online, setOnline] = useState(backend.connectivity.isOnline());
 
@@ -166,8 +167,14 @@ export function HouseholdScreen() {
   };
 
   const signOut = async () => {
-    const r = await session.signOut(false);
-    if (!r.ok && r.error === 'pending' && r.pending) setConfirm({ kind: 'signOutPending', pending: r.pending });
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const r = await session.signOut(false);
+      if (!r.ok && r.error === 'pending' && r.pending) setConfirm({ kind: 'signOutPending', pending: r.pending });
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   const confirmProps = (() => {
@@ -205,7 +212,7 @@ export function HouseholdScreen() {
         <IconButton label="Terug" onPress={() => (router.canGoBack() ? router.back() : router.navigate('/'))} testID="back">
           <ChevronIcon direction="left" />
         </IconButton>
-        <AppText variant="body" accessibilityRole="header" style={styles.strong}>
+        <AppText variant="body" accessibilityRole="header">
           Huishouden
         </AppText>
       </View>
@@ -214,13 +221,13 @@ export function HouseholdScreen() {
           <PrimaryButton label="Deel lijst" onPress={() => void share(false)} busy={sharing} />
           {code ? (
             <View style={styles.codeRow}>
-              <AppText variant="footnote" color="textMuted" style={styles.flex} selectable testID="invite-code">
+              <AppText variant="body" style={styles.flex} selectable testID="invite-code">
                 {`Code: ${code}`}
               </AppText>
               {isOwner ? (
                 <TextButton
                   label="Code vervangen"
-                  tone="muted"
+                  size="callout"
                   onPress={() => {
                     setConfirmError(null);
                     setConfirm({ kind: 'replaceCode' });
@@ -280,30 +287,42 @@ export function HouseholdScreen() {
         </View>
 
         {prices.available ? (
-          <View style={[styles.block, styles.toggleRow]}>
+          // The whole 48 pt row toggles (D3-04); the switch itself is only the visual.
+          <Pressable
+            style={[styles.block, styles.toggleRow]}
+            onPress={() => void prices.setOptIn(!prices.optIn)}
+            accessibilityRole="switch"
+            accessibilityLabel="Prijsvergelijking tonen"
+            accessibilityState={{ checked: prices.optIn }}
+            testID="price-toggle-row">
             <AppText variant="body" style={styles.flex}>
               Prijsvergelijking tonen
             </AppText>
-            <Switch
-              value={prices.optIn}
-              onValueChange={(v) => void prices.setOptIn(v)}
-              accessibilityLabel="Prijsvergelijking tonen"
-              trackColor={{ true: c.accent, false: c.border }}
-              thumbColor={c.surfaceRaised}
-              // react-native-web draws its own teal thumb unless told otherwise (D2-07).
-              {...({ activeThumbColor: c.surfaceRaised } as object)}
-            />
-          </View>
+            <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+              <Switch
+                value={prices.optIn}
+                trackColor={{ true: c.accent, false: c.border }}
+                // A light thumb in both themes: a dark one on the green track read as a hole (D3-04).
+                thumbColor={palette.light.surfaceRaised}
+                {...({ activeThumbColor: palette.light.surfaceRaised } as object)}
+              />
+            </View>
+          </Pressable>
         ) : null}
 
         <View style={styles.block}>
-          <AppText variant="footnote" color="textMuted" testID="signed-in-as">
+          <Divider />
+          <AppText variant="footnote" color="textMuted" accessibilityRole="header" style={styles.groupHead}>
+            Account
+          </AppText>
+          <AppText variant="callout" color="textMuted" testID="signed-in-as">
             {`Ingelogd als ${user.email ?? user.displayName}`}
           </AppText>
-          <TextButton label="Uitloggen" onPress={() => void signOut()} />
+          <TextButton label={signingOut ? 'Uitloggen…' : 'Uitloggen'} accessibilityLabel="Uitloggen" tone="text" size="callout" disabled={signingOut} onPress={() => void signOut()} />
           <TextButton
             label="Huishouden verlaten"
             tone="danger"
+            size="callout"
             disabled={!online}
             onPress={() => {
               setConfirmError(null);
@@ -313,6 +332,7 @@ export function HouseholdScreen() {
           <TextButton
             label="Account verwijderen"
             tone="danger"
+            size="callout"
             disabled={!online}
             onPress={() => {
               setConfirmError(null);
@@ -383,4 +403,5 @@ const styles = StyleSheet.create({
   memberMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   toggleRow: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.minTouch },
+  groupHead: { marginTop: spacing.sm },
 });

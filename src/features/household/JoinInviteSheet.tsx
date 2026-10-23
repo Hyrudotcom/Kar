@@ -18,11 +18,9 @@ import { useSession } from '../session/SessionProvider';
 
 type Preview = Extract<PreviewInviteResult, { ok: true }>;
 
-/** "Word je lid van ‘Thuis’?"; "… ‘Thuis’ van Jan?" when the joiner's own household has the same name. */
-export function joinTitle(preview: Pick<Preview, 'household_name' | 'inviter_name'>, currentName: string | null): string {
-  const same = !!currentName && currentName.trim().toLocaleLowerCase('nl-NL') === preview.household_name.trim().toLocaleLowerCase('nl-NL');
-  const of = same && preview.inviter_name ? ` van ${preview.inviter_name}` : '';
-  return `Word je lid van ‘${preview.household_name}’${of}?`;
+/** Design-spec 4.2: "Word je lid van ‘Thuis’?" with "Uitgenodigd door Jan · 2 leden" below (D3-10). */
+export function joinTitle(preview: Pick<Preview, 'household_name'>): string {
+  return `Word je lid van ‘${preview.household_name}’?`;
 }
 
 export function JoinInviteSheet() {
@@ -93,8 +91,7 @@ export function JoinInviteSheet() {
     }
   };
 
-  // The inviter is named once: in the title when it says "‘Thuis’ van Jan", else in the subtitle (D2-09).
-  const title = preview ? joinTitle(preview, session.state.kind === 'ready' ? currentName : null) : '';
+  const title = preview ? joinTitle(preview) : '';
   return (
     <BottomSheet visible={!!code && (!!preview || (!!error && dismissed !== code))} onClose={close} testID="join-sheet" accessibilityLabel="Uitnodiging">
       {preview ? (
@@ -103,7 +100,7 @@ export function JoinInviteSheet() {
             {title}
           </AppText>
           <AppText variant="callout" color="textMuted">
-            {[preview.inviter_name && !title.endsWith(` van ${preview.inviter_name}?`) ? `Uitgenodigd door ${preview.inviter_name}` : null, `${preview.member_count} ${preview.member_count === 1 ? 'lid' : 'leden'}`].filter(Boolean).join(' · ')}
+            {[preview.inviter_name ? `Uitgenodigd door ${preview.inviter_name}` : null, `${preview.member_count} ${preview.member_count === 1 ? 'lid' : 'leden'}`].filter(Boolean).join(' · ')}
           </AppText>
           {preview.leaves_current_household ? (
             <AppText variant="callout">{`Je verlaat dan ${preview.current_household_name ?? currentName}.`}</AppText>

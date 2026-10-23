@@ -4,11 +4,11 @@
  * restores all three). Every snackbar is announced to screen readers.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Keyboard, StyleSheet, View, type KeyboardEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { announce, Snackbar } from '@/src/ui';
-import { motion, sizes } from '@/src/ui/tokens';
+import { motion, sizes, spacing } from '@/src/ui/tokens';
 
 export const UNDO_LABEL = 'Ongedaan maken';
 
@@ -41,8 +41,36 @@ interface SnackbarApi {
 
 const Ctx = createContext<SnackbarApi | null>(null);
 
-export function SnackbarProvider({ children, bottomOffset = 64 }: { children: ReactNode; bottomOffset?: number }) {
+/** Keyboard height (0 when hidden): the snackbar must stay visible while the user keeps adding items. */
+function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const onShow = (e: KeyboardEvent) => setHeight(e?.endCoordinates?.height ?? 0);
+    const onHide = () => setHeight(0);
+    // iOS sends Will* (in time for the animation), Android only Did*.
+    const subs = [
+      Keyboard.addListener('keyboardWillShow', onShow),
+      Keyboard.addListener('keyboardDidShow', onShow),
+      Keyboard.addListener('keyboardWillHide', onHide),
+      Keyboard.addListener('keyboardDidHide', onHide),
+    ];
+    return () => subs.forEach((x) => x.remove());
+  }, []);
+  return height;
+}
+
+export function SnackbarProvider({
+  children,
+  bottomOffset = 64,
+  resetKey,
+}: {
+  children: ReactNode;
+  bottomOffset?: number;
+  /** When this changes (other account, household or engine), a visible snackbar and its undo go away. */
+  resetKey?: unknown;
+}) {
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardHeight();
   const [current, setCurrent] = useState<Current | null>(null);
   const currentRef = useRef<Current | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,6 +120,12 @@ export function SnackbarProvider({ children, bottomOffset = 64 }: { children: Re
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
+  // An undo of the previous account or household must never be offered (it would act on a disposed engine).
+  // Informational toasts ("Je hebt Thuis verlaten") may stay.
+  useEffect(() => {
+    if (currentRef.current?.actions.length) hide();
+  }, [resetKey, hide]);
+
   const onAction = useCallback(() => {
     const c = currentRef.current;
     hide();
@@ -114,7 +148,7 @@ export function SnackbarProvider({ children, bottomOffset = 64 }: { children: Re
     <Ctx.Provider value={api}>
       {children}
       {current ? (
-        <View pointerEvents="box-none" style={[styles.host, { bottom: insets.bottom + bottomOffset }]}>
+        <View pointerEvents="box-none" style={[styles.host, { bottom: Math.max(insets.bottom + bottomOffset, keyboard + spacing.sm) }]} testID="snackbar-host">
           <Snackbar key={current.key} message={current.message} actionLabel={current.actionLabel} onAction={current.actionLabel ? onAction : undefined} />
         </View>
       ) : null}

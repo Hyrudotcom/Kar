@@ -54,7 +54,7 @@ export function SyncIndicator({
   return (
     <>
       <IconButton label={label} accessibilityHint="Toont uitleg" onPress={() => setOpen(true)} testID="sync-icon">
-        {state === 'offline' ? <CloudOffIcon size={22} color="textMuted" /> : <WarningIcon size={22} color="danger" />}
+        {state === 'offline' ? <CloudOffIcon size={24} color="text" /> : <WarningIcon size={22} color="danger" />}
       </IconButton>
       <BottomSheet visible={open} onClose={() => setOpen(false)} accessibilityLabel={label} testID="sync-sheet">
         {state === 'offline' ? (

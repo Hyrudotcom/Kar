@@ -29,7 +29,7 @@ export function SuggestionList({
         accessibilityRole="button"
         accessibilityLabel={addLabel}
         style={({ pressed }) => [styles.row, { backgroundColor: pressed ? c.surface : c.accentSoft }]}>
-        <PlusIcon size={20} color="accent" />
+        <PlusIcon size={22} color="accent" />
         <AppText variant="body" style={styles.text}>
           {addLabel}
         </AppText>
@@ -53,7 +53,8 @@ export function SuggestionList({
 
 const styles = StyleSheet.create({
   wrap: { paddingBottom: spacing.sm },
-  row: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.minTouch, paddingHorizontal: sizes.sideMargin + spacing.sm, gap: spacing.sm },
-  iconSpace: { width: 20 },
+  // The "+" sits under the quick-add bar's "+" (16 margin + 1.5 border + 12), text on the rows' 56 pt inset (D3-13).
+  row: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.minTouch, paddingLeft: sizes.sideMargin + 14, paddingRight: sizes.sideMargin, gap: spacing.xs },
+  iconSpace: { width: 22 },
   text: { flex: 1, paddingVertical: spacing.sm },
 });

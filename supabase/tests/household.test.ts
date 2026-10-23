@@ -257,19 +257,63 @@ describe('preview_invite / accept_invite', () => {
     expect((await rpc(u, 'preview_invite', { p_code: randomCode() }, { ip: '203.0.113.90' })).error).toBe('invalid_code');
   });
 
-  test('global ceiling: 200 failed lookups of unknown codes per 10 minutes, across accounts and IPs', async () => {
+  test('global ceiling: 200 failed lookups of unknown codes per 10 minutes, for accounts that already failed one', async () => {
     try {
       await admin(
         `insert into private.invite_attempts (user_id, ip, code, success)
          select gen_random_uuid(), null, 'GLOBALTEST', false from generate_series(1, 200)`,
       );
-      const u = await createUser();
-      expect(await rpc(u, 'preview_invite', { p_code: randomCode() })).toEqual({ ok: false, error: 'rate_limited' });
+      const guesser = await createUser();
+      await admin(`insert into private.invite_attempts (user_id, ip, code, success) values ($1, null, 'GLOBALTEST', false)`, [guesser]);
+      expect(await rpc(guesser, 'preview_invite', { p_code: randomCode() })).toEqual({ ok: false, error: 'rate_limited' });
+      // A clean account (someone opening a real link) is not refused by the ceiling.
+      const clean = await createUser();
+      expect((await rpc(clean, 'preview_invite', { p_code: randomCode() })).error).toBe('invalid_code');
     } finally {
       await admin(`delete from private.invite_attempts where code = 'GLOBALTEST'`);
     }
     const u = await createUser();
     expect((await rpc(u, 'preview_invite', { p_code: randomCode() })).error).toBe('invalid_code');
+  });
+
+  test('round 3: an e-mail derived name is never shown to invite holders; a real name (Apple) replaces it', async () => {
+    const owner = await createUser();
+    const local = `jan.dejong${owner.slice(0, 8)}`;
+    await admin(`update auth.users set raw_user_meta_data = '{}', email = $2 where id = $1`, [owner, `${local}@example.test`]);
+    await admin(`update public.profiles set display_name = $2 where user_id = $1`, [owner, local]);
+    const hh = await rpc(owner, 'create_household', {});
+    const inv = await rpc(owner, 'create_invite', { p_household_id: hh.household.id });
+    const u = await createUser();
+    expect((await rpc(u, 'preview_invite', { p_code: inv.code })).inviter_name).toBe('');
+    // Apple: signInWithIdToken, then updateUser({ data: { full_name } }).
+    await admin(`update auth.users set raw_user_meta_data = '{"full_name": "Jan de Jong"}' where id = $1`, [owner]);
+    expect((await admin(`select display_name from public.profiles where user_id = $1`, [owner]))[0].display_name).toBe('Jan de Jong');
+    expect((await rpc(u, 'preview_invite', { p_code: inv.code })).inviter_name).toBe('Jan de Jong');
+    // A name the user chose is never overwritten by later metadata.
+    await admin(`update auth.users set raw_user_meta_data = '{"full_name": "Iemand anders"}' where id = $1`, [owner]);
+    expect((await admin(`select display_name from public.profiles where user_id = $1`, [owner]))[0].display_name).toBe('Jan de Jong');
+  });
+
+  test('round 3: 20 accounts x 10 random codes cannot block a valid invitation for a clean account', async () => {
+    const attackers: string[] = [];
+    try {
+      for (let a = 0; a < 20; a++) {
+        const u = await createUser();
+        attackers.push(u);
+        for (let i = 0; i < 10; i++) expect((await rpc(u, 'preview_invite', { p_code: randomCode() })).ok).toBe(false);
+      }
+      const failed = await admin(`select count(*)::int as n from private.invite_attempts where household_id is null and not success and at > now() - interval '10 minutes'`);
+      expect(failed[0].n).toBeGreaterThanOrEqual(200);
+      const T = await createHousehold();
+      const inv = await rpc(T.owner, 'create_invite', { p_household_id: T.hid });
+      const joiner = await createUser();
+      expect((await rpc(joiner, 'preview_invite', { p_code: inv.code })).ok).toBe(true);
+      expect((await rpc(joiner, 'accept_invite', { p_code: inv.code })).ok).toBe(true);
+      // The guessers stay capped.
+      expect(await rpc(attackers[0]!, 'preview_invite', { p_code: inv.code })).toEqual({ ok: false, error: 'rate_limited' });
+    } finally {
+      await admin(`delete from private.invite_attempts where user_id = any($1::uuid[])`, [attackers]);
+    }
   });
 
   test('round 2: refused (rate_limited) requests are not counted: one account cannot lock out everyone', async () => {

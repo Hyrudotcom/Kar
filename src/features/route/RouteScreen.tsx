@@ -39,7 +39,6 @@ import {
   IconButton,
   InfoIcon,
   QuestionIcon,
-  ReceiptIcon,
   ScreenHeader,
   SkeletonRows,
   TextButton,
@@ -50,6 +49,9 @@ import { sizes, spacing } from '@/src/ui/tokens';
 import type { AppEngine } from '@/src/lib/backend/types';
 import { formatWhen } from '../list/time';
 import { usePrices } from './PriceContext';
+
+/** What the price cache holds: the result plus the sources it used (name + channel for the footnote). */
+type CachedResult = ComparisonResult & { used_sources?: Pick<PriceSource, 'id' | 'name' | 'channel'>[] };
 
 export const UNAVAILABLE_BODY = `We vergelijken pas als we betrouwbare prijzen hebben. ${PRICE_COPY.unavailableBody}`;
 
@@ -137,7 +139,7 @@ function RouteBody() {
   const prices = usePrices();
   const engine = useSyncEngine() as AppEngine | null;
   const snapshot = useList();
-  const [cached, setCached] = useState<{ result: ComparisonResult; computedAt: number } | null>(null);
+  const [cached, setCached] = useState<{ result: ComparisonResult; computedAt: number; sources: PriceSource[] } | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   // Price ages are in whole days: refreshing "now" once a minute is plenty.
   const [now, setNow] = useState(() => Date.now());
@@ -160,14 +162,20 @@ function RouteBody() {
     const key = `${live.list_fingerprint}:${live.computed_at}`;
     if (lastWritten.current === key) return;
     lastWritten.current = key;
-    void engine.writePriceCache({ result: live, listFingerprint: live.list_fingerprint, computedAt: live.computed_at }).catch(() => undefined);
-  }, [engine, live]);
+    // The sources travel with the result: offline, the footnote must still name the right channel.
+    const used = (prices.dataset?.sources ?? []).filter((x) => live.source_ids.includes(x.id)).map(({ id, name, channel }) => ({ id, name, channel }));
+    const entry: CachedResult = { ...live, used_sources: used };
+    void engine.writePriceCache({ result: entry, listFingerprint: live.list_fingerprint, computedAt: live.computed_at }).catch(() => undefined);
+  }, [engine, live, prices.dataset]);
 
   useEffect(() => {
     if (prices.status !== 'error' || !engine?.readPriceCache) return;
     let alive = true;
     void engine.readPriceCache().then((e) => {
-      if (alive && e && typeof e.result === 'object' && e.result) setCached({ result: e.result as ComparisonResult, computedAt: e.computedAt });
+      if (alive && e && typeof e.result === 'object' && e.result) {
+        const { used_sources, ...result } = e.result as CachedResult;
+        setCached({ result, computedAt: e.computedAt, sources: Array.isArray(used_sources) ? (used_sources as PriceSource[]) : [] });
+      }
     });
     return () => {
       alive = false;
@@ -191,7 +199,7 @@ function RouteBody() {
         <ResultView
           result={cached.result}
           stale={{ since: cached.computedAt, changed: cached.result.list_fingerprint !== fingerprint }}
-          sources={sources}
+          sources={cached.sources}
           onInfo={() => setInfoOpen(true)}
           infoOpen={infoOpen}
           onCloseInfo={() => setInfoOpen(false)}
@@ -202,7 +210,6 @@ function RouteBody() {
       <>
         <Title />
         <EmptyState
-          icon={<ReceiptIcon size={40} color="textMuted" />}
           title="Prijzen tijdelijk niet beschikbaar"
           body="Je lijst werkt gewoon."
           action={{ label: 'Opnieuw proberen', onPress: prices.reload }}
@@ -216,7 +223,7 @@ function RouteBody() {
     return (
       <>
         <Title />
-        <EmptyState icon={<ReceiptIcon size={40} color="textMuted" />} title={PRICE_COPY.unavailableTitle} body={UNAVAILABLE_BODY} testID="route-unavailable" />
+        <EmptyState title={PRICE_COPY.unavailableTitle} body={UNAVAILABLE_BODY} testID="route-unavailable" />
       </>
     );
   }
@@ -228,7 +235,6 @@ function RouteBody() {
       <>
         <Title />
         <EmptyState
-          icon={<ReceiptIcon size={40} color="textMuted" />}
           title="Vergelijk je lijst per winkel"
           body={`We tellen per winkel je hele lijst op${names.length ? `, met prijzen van ${names.join(' en ')}` : ''}. ${PRICE_COPY.optInBody}`}
           action={{ label: PRICE_COPY.optInButton, onPress: () => void prices.setOptIn(true) }}
@@ -239,12 +245,11 @@ function RouteBody() {
     );
   }
 
-  if (live.state === 'empty') {
+  if (live.state === 'empty' && live.excluded_count === 0) {
     return (
       <>
         <Title />
         <EmptyState
-          icon={<ReceiptIcon size={40} color="textMuted" />}
           title={PRICE_COPY.empty}
           body="Voeg items toe aan je lijst."
           action={{ label: 'Naar Mijn lijst', onPress: () => router.navigate('/') }}
@@ -282,6 +287,7 @@ function ResultView({
   const store = result.stores.find((s) => s.chain_id === storeId) ?? null;
   const used = sources.filter((s) => result.source_ids.includes(s.id));
   const webshop = used.some((s) => s.channel === 'webshop');
+  const national = used.some((s) => s.channel === 'national');
 
   // Items without a price at any store can be excluded for all stores at once (P17).
   const unpricedEverywhere = useMemo(() => {
@@ -352,7 +358,11 @@ function ResultView({
           </View>
         ) : null}
         <AppText variant="footnote" color="textMuted" style={styles.footer}>
-          {webshop ? PRICE_COPY.webshopFootnote : 'Dit zijn landelijke prijzen. In de winkel kan het anders zijn.'}
+          {webshop && !national
+            ? PRICE_COPY.webshopFootnote
+            : national && !webshop
+              ? 'Dit zijn landelijke prijzen. In de winkel kan het anders zijn.'
+              : 'In de winkel kunnen prijzen anders zijn.'}
         </AppText>
       </ScrollView>
       <StoreSheet basket={store} onClose={() => setStoreId(null)} />
@@ -415,15 +425,23 @@ function StoreSheet({ basket, onClose }: { basket: StoreBasket | null; onClose()
     !!basket && !!l.catalog_item_id && !!prices.dataset?.overrides.some((o) => o.catalog_item_id === l.catalog_item_id && o.chain_id === basket.chain_id);
   return (
     <>
-      <BottomSheet visible={!!basket && !line} onClose={onClose} title={basket?.chain_name} testID="store-sheet">
-        {basket ? (
-          <AppText variant="footnote" color="textMuted" testID="store-sheet-summary" style={styles.sheetSummary}>
-            {storeSummary(basket)}
-          </AppText>
-        ) : null}
-        {basket?.lines.map((l) => (
-          <LineRow key={l.list_item_id} line={l} onPress={l.catalog_item_id && (l.status !== 'unknown' || overridden(l)) ? () => setLine(l) : undefined} />
-        ))}
+      <BottomSheet
+        visible={!!basket && !line}
+        onClose={onClose}
+        title={basket?.chain_name}
+        header={
+          basket ? (
+            <AppText variant="footnote" color="textMuted" testID="store-sheet-summary">
+              {storeSummary(basket)}
+            </AppText>
+          ) : null
+        }
+        testID="store-sheet">
+        <View>
+          {basket?.lines.map((l) => (
+            <LineRow key={l.list_item_id} line={l} onPress={l.catalog_item_id && (l.status !== 'unknown' || overridden(l)) ? () => setLine(l) : undefined} />
+          ))}
+        </View>
       </BottomSheet>
       <BottomSheet visible={!!basket && !!line} onClose={() => setLine(null)} title={line?.product_name ?? line?.item_name} testID="line-sheet">
         {line && basket && line.catalog_item_id ? (
@@ -465,7 +483,7 @@ function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) 
   const promotion = unknown ? null : formatPromotion(line);
   const packages = formatPackages(line);
   const title = line.product_name ?? line.item_name;
-  const spoken = [title, packages ? `${line.package_count} keer` : null, unknown ? 'geen prijs' : formatCents(line.line_total_cents!), promotion, age, overage].filter(Boolean).join(', ');
+  const spoken = [title, packages, unknown ? 'geen prijs' : formatCents(line.line_total_cents!), promotion, age, overage].filter(Boolean).join(', ');
   return (
     <Pressable onPress={onPress} disabled={!onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={spoken} style={styles.line}>
       <View style={styles.lineRow}>
@@ -519,7 +537,6 @@ function LineRow({ line, onPress }: { line: BasketLine; onPress?: () => void }) 
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  sheetSummary: { marginBottom: spacing.xs },
   scroll: { paddingBottom: spacing.xxl * 3 },
   header: { paddingHorizontal: sizes.sideMargin, marginBottom: spacing.sm },
   noComplete: { marginTop: spacing.sm },
@@ -529,8 +546,9 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   block: { paddingHorizontal: sizes.sideMargin, paddingTop: spacing.lg, gap: spacing.xs },
   footer: { paddingHorizontal: sizes.sideMargin, paddingTop: spacing.xl },
-  line: { paddingTop: spacing.sm, gap: 2 },
+  line: { paddingTop: spacing.sm, gap: 2, minHeight: 48 },
   lineRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 32 },
   inline: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  lineDivider: { marginTop: spacing.sm, marginBottom: spacing.xs },
+  // Full-bleed hairline like every other list (D3-15).
+  lineDivider: { marginTop: spacing.sm, marginHorizontal: -sizes.sideMargin },
 });

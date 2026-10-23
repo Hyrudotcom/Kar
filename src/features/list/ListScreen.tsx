@@ -81,9 +81,16 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
           unit = match.unit;
         }
       }
+      const typed = text;
       setText('');
       try {
         const r = await engine.addItem({ name, quantity, unit });
+        if (r.outcome === 'noop') {
+          // Nothing was stored: never lose what was typed without a word.
+          setText(typed);
+          snackbar.show({ message: 'Dit item kon niet worden toegevoegd.' });
+          return;
+        }
         if (r.outcome === 'merged') {
           snackbar.show({ message: `${r.itemName} ${formatIncrement(quantity, unit)}`, onAction: () => engine.undo(r.undo) });
         } else if (r.outcome === 'restored') {
@@ -94,7 +101,7 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
         snackbar.show({ message: 'Dit item kon niet worden toegevoegd.' });
       }
     },
-    [engine, snackbar, snapshot.checked, reduced],
+    [engine, snackbar, snapshot.checked, reduced, text],
   );
 
   const submit = useCallback(() => {
@@ -115,6 +122,7 @@ function ListScreenBody({ engine, householdName, members, me }: { engine: AppEng
       hapticMedium();
       try {
         const r = await engine.deleteItem(item.id);
+        if (r.outcome === 'noop') return; // nothing deleted: no "verwijderd · Ongedaan maken"
         snackbar.show({
           message: `${r.itemName || item.name} verwijderd`,
           group: 'delete',

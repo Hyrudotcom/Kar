@@ -178,17 +178,24 @@ export const compareBaskets: CompareBaskets = (input) => {
     links.set(key, list);
   }
 
-  // ---- coverage: a chain counts only with a VERIFIED (<= 7 d) price for a product reachable through
-  // a confident catalog link (design-spec 4.5: at least 2 verified chains). Stale-only prices or
-  // prices of unlinked products never switch the comparison on.
-  const coveredChains = new Set<string>();
+  // ---- coverage (design-spec 4.5, architecture 6.2 rule 6) -------------------------------------------
+  // The comparison switches on only with >= 2 chains that have a VERIFIED (<= 7 d) price for a linked
+  // product. Once on, every chain with any usable (<= 14 d, stale included) linked price gets a basket:
+  // a basket of only stale prices is still complete (rule 3), and whether a chain is shown never
+  // depends on prices of products that are not on the list.
+  const verifiedChains = new Set<string>();
+  const pricedChains = new Set<string>();
   for (const [key, list] of links) {
     const chainId = key.slice(key.lastIndexOf('|') + 1);
-    if (list.some((p) => latest.get(`${p.id}|${chainId}`)?.status === 'verified')) coveredChains.add(chainId);
+    for (const p of list) {
+      const st = latest.get(`${p.id}|${chainId}`)?.status;
+      if (st === 'verified') verifiedChains.add(chainId);
+      if (st === 'verified' || st === 'stale') pricedChains.add(chainId);
+    }
   }
 
   // ---- state: unavailable (v1 today) / empty --------------------------------------------------------
-  if (coveredChains.size < PRICE_AGE_RULES.minVerifiedChains) return { ...base, state: 'unavailable' };
+  if (verifiedChains.size < PRICE_AGE_RULES.minVerifiedChains) return { ...base, state: 'unavailable' };
   if (compared.length === 0) return { ...base, state: 'empty' };
 
   const overridden = new Set(data.overrides.map((o) => `${o.catalog_item_id}|${o.chain_id}`));
@@ -198,7 +205,7 @@ export const compareBaskets: CompareBaskets = (input) => {
   let oldestAge: number | null = null;
   const baskets: StoreBasket[] = [];
 
-  const chainIds = [...coveredChains].sort(cmpStr);
+  const chainIds = [...pricedChains].sort(cmpStr);
   for (const chainId of chainIds) {
     const chain = chains.get(chainId)!;
     const lines: BasketLine[] = [];

@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { PrimaryButton, TextButton } from './Button';
 import { AppText } from './Text';
-import { spacing } from './tokens';
+import { sizes, spacing } from './tokens';
 
 /** Line icon, title, one sentence, at most one button (design-spec 3). */
 export function EmptyState({
@@ -46,7 +46,8 @@ export function EmptyState({
 }
 
 const styles = StyleSheet.create({
-  root: { alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: spacing.xxl },
+  // The app's 16 pt side margin, so a full-width button lines up with the header text (D3-17).
+  root: { alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: sizes.sideMargin, paddingVertical: spacing.xxl },
   icon: { marginBottom: spacing.sm },
   body: { maxWidth: 300 },
   primary: { alignSelf: 'stretch', marginTop: spacing.md },

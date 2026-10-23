@@ -4,7 +4,7 @@ import type { ComparisonResult, PriceDataset } from '@/src/contracts';
 import { DatasetBuilder } from '@/src/price/__tests__/fixtures';
 
 import { flush, makeBackend, renderReady, signIn } from '../../__tests__/helpers';
-import { PRICE_LOAD_TIMEOUT_MS } from '../PriceContext';
+import { PRICE_LOAD_TIMEOUT_MS, usePrices, type PriceState } from '../PriceContext';
 import { isCachedComparisonUsable, RouteScreen, speakCents, storeAccessibilityLabel } from '../RouteScreen';
 
 jest.mock('react-native-safe-area-context', () => require('../../__tests__/mocks').safeAreaMock());
@@ -173,7 +173,7 @@ describe('Goedkoopste route', () => {
     await flush();
     expect(backend.world.optIn.get(backend.world.currentUser!.id)).toBe(true);
 
-    expect(screen.getByText('2 items · oudste prijs 9 d')).toBeTruthy();
+    expect(screen.getByText('2 producten · oudste prijs 9 dagen oud')).toBeTruthy();
     const jumbo = screen.getByTestId('store-jumbo');
     expect(within(jumbo).getByText('€4,59')).toBeTruthy();
     expect(within(jumbo).getByText('Goedkoopste · 1 verouderd')).toBeTruthy();
@@ -224,7 +224,7 @@ describe('Goedkoopste route', () => {
     expect(screen.queryByText(/^€/)).toBeNull();
     await act(async () => fireEvent.press(screen.getByLabelText('Cadeautje oma niet vergelijken')));
     await flush();
-    expect(screen.getByText('1 van 2 items vergeleken · 1 uitgesloten · oudste prijs 9 d')).toBeTruthy();
+    expect(screen.getByText('1 van 2 producten vergeleken · 1 uitgesloten · oudste prijs 9 dagen oud')).toBeTruthy();
     expect(within(screen.getByTestId('store-lidl')).getByText('€0,99')).toBeTruthy();
     const hh = backend.world.memberships.get(backend.world.currentUser!.id)!.householdId;
     expect(backend.world.server.list(hh).find((i) => i.name === 'Cadeautje oma')!.exclude_from_comparison).toBe(true);
@@ -236,6 +236,50 @@ describe('Goedkoopste route', () => {
     await flush();
     expect(screen.getByText('Nog niets te vergelijken')).toBeTruthy();
     expect(screen.getByLabelText('Naar Mijn lijst')).toBeTruthy();
+  });
+
+  it('round 3: all items on "Niet vergelijken" still shows them with "Toch vergelijken"', async () => {
+    await setup({ priceDataset: fixture() }, [{ name: 'Cadeautje oma' }]);
+    await act(async () => fireEvent.press(await screen.findByLabelText('Prijzen vergelijken')));
+    await flush();
+    await act(async () => fireEvent.press(screen.getByLabelText('Cadeautje oma niet vergelijken')));
+    await flush();
+    expect(screen.queryByText('Nog niets te vergelijken')).toBeNull();
+    await act(async () => fireEvent.press(screen.getByLabelText('Cadeautje oma toch vergelijken')));
+    await flush();
+    expect(screen.getByLabelText('Cadeautje oma niet vergelijken')).toBeTruthy();
+  });
+
+  it('round 3: an offline cached comparison names the channel of the prices it shows', async () => {
+    const backend = makeBackend({ priceDataset: fixture() });
+    const me = await signIn(backend);
+    const r = await backend.households.createHousehold();
+    if (!r.ok) throw new Error('hh');
+    backend.world.addItemsAs(me.id, r.household.id, [{ name: 'Melk' }, { name: 'Brood' }]);
+    let prices: PriceState | null = null;
+    function Grab() {
+      prices = usePrices();
+      return null;
+    }
+    await renderReady(
+      <>
+        <RouteScreen />
+        <Grab />
+      </>,
+      backend,
+    );
+    await act(async () => fireEvent.press(await screen.findByLabelText('Prijzen vergelijken')));
+    await flush();
+    expect(screen.getByText('Dit zijn webshopprijzen. In de winkel kan het anders zijn.')).toBeTruthy();
+    await flush(20); // cache written
+    backend.prices.loadDataset = async () => {
+      throw new Error('offline');
+    };
+    await act(async () => prices!.reload());
+    await flush(20);
+    expect(screen.getByTestId('route-result')).toBeTruthy();
+    expect(screen.getByText('Dit zijn webshopprijzen. In de winkel kan het anders zijn.')).toBeTruthy();
+    expect(screen.queryByText(/landelijke prijzen/)).toBeNull();
   });
 
   it('speaks amounts in Dutch', () => {

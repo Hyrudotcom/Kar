@@ -15,7 +15,7 @@ export function CheckedHeader({ count, expanded, onToggle, onClear }: { count: n
         accessibilityState={{ expanded }}
         testID="checked-toggle"
         style={styles.toggle}>
-        <ChevronIcon size={20} direction={expanded ? 'down' : 'right'} color="textMuted" />
+        <ChevronIcon size={24} direction={expanded ? 'down' : 'right'} color="textMuted" />
         <AppText variant="body" color="textMuted">{`Afgevinkt (${count})`}</AppText>
       </Pressable>
       <TextButton label="Wissen" onPress={onClear} accessibilityLabel="Afgevinkte items wissen" style={styles.clear} />
@@ -25,6 +25,8 @@ export function CheckedHeader({ count, expanded, onToggle, onClear }: { count: n
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', minHeight: sizes.rowMinHeight, paddingHorizontal: sizes.sideMargin, borderBottomWidth: StyleSheet.hairlineWidth },
-  toggle: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: sizes.minTouch },
-  clear: { paddingHorizontal: spacing.sm },
+  // Chevron in the checkbox column (16..40), label on the rows' 56 pt text inset, "Wissen" ending on
+  // the 16 pt margin like the quick-add bar (D3-13).
+  toggle: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, minHeight: sizes.minTouch },
+  clear: { paddingLeft: spacing.sm },
 });
