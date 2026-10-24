@@ -23,7 +23,7 @@ import http from 'node:http';
 import net from 'node:net';
 
 const PORT = Number(process.argv[2] ?? process.env.GB_GATEWAY_PORT ?? 54321);
-const PROJECT = process.env.GB_PROJECT_ID ?? 'goedboodschap';
+const PROJECT = process.env.GB_PROJECT_ID ?? 'kar';
 
 function ipOf(service) {
   const out = execFileSync('docker', ['inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', `supabase_${service}_${PROJECT}`], {

@@ -36,7 +36,7 @@ export const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const INVITE_CODE_LENGTH = 6;
 export const INVITE_CODE_REGEX = /^[A-HJ-NP-Z2-9]{6}$/;
 /** Share URL base; the HTTPS page opens the app or shows the code + store buttons. */
-export const INVITE_URL_BASE = 'https://goedboodschap.nl/j/';
+export const INVITE_URL_BASE = 'https://getkar.nl/j/';
 
 /** A row of public.list_items as returned by pull_changes (snake_case wire format). */
 export interface ListItemRow {

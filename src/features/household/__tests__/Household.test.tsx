@@ -39,7 +39,7 @@ describe('Huishouden', () => {
     await flush();
     expect(shareSpy).toHaveBeenCalledTimes(1);
     const msg = (shareSpy.mock.calls[0]![0] as { message: string }).message;
-    const m = /^Doe je boodschappen samen met mij in Goedboodschap: https:\/\/goedboodschap\.nl\/j\/([A-Z2-9]{6}) · Code: ([A-Z2-9]{6})$/.exec(msg);
+    const m = /^Doe je boodschappen samen met mij in Kar: https:\/\/getkar\.nl\/j\/([A-Z2-9]{6}) · Code: ([A-Z2-9]{6})$/.exec(msg);
     expect(m).toBeTruthy();
     expect(m![1]).toBe(m![2]);
     expect(INVITE_CODE_REGEX.test(m![1]!)).toBe(true);

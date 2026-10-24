@@ -744,7 +744,7 @@ begin
   select * into v_inv from public.invites i where i.household_id = p_household_id and i.revoked_at is null;
   if found and not coalesce(p_replace, false) and v_inv.expires_at > now() then
     return pg_catalog.jsonb_build_object('ok', true, 'code', v_inv.code, 'expires_at', v_inv.expires_at,
-                                         'url', 'https://goedboodschap.nl/j/' || v_inv.code);
+                                         'url', 'https://getkar.nl/j/' || v_inv.code);
   end if;
   update public.invites i set revoked_at = now() where i.household_id = p_household_id and i.revoked_at is null;
 
@@ -761,7 +761,7 @@ begin
   end loop;
 
   return pg_catalog.jsonb_build_object('ok', true, 'code', v_inv.code, 'expires_at', v_inv.expires_at,
-                                       'url', 'https://goedboodschap.nl/j/' || v_inv.code);
+                                       'url', 'https://getkar.nl/j/' || v_inv.code);
 end
 $$;
 

@@ -1,4 +1,4 @@
-# Goedboodschap
+# Kar
 
 Minimalistische gedeelde boodschappenlijst voor iOS en Android (Expo + Supabase).
 

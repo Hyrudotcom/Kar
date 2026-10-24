@@ -98,7 +98,7 @@ export function SignInScreen() {
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
             <AppText variant="title" accessibilityRole="header">
-              Goedboodschap
+              Kar
             </AppText>
             <AppText variant="callout" color="textMuted">
               Samen één boodschappenlijst

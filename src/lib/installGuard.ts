@@ -43,7 +43,7 @@ export function guardFreshInstall(store: RawSecureStore, marker: InstallMarker, 
         await clearAppKeys(store, sessionKey);
         await marker.set();
       } catch (e) {
-        console.warn('Goedboodschap: install check failed', e);
+        console.warn('Kar: install check failed', e);
       }
     })());
   return {

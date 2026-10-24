@@ -9,9 +9,9 @@ export function isAuthRedirect(path: string): boolean {
   const rest = (m ? path.slice(m[0].length) : path).replace(/^\/\/[^/]*/, '');
   const pathname = rest.split(/[?#]/)[0]!.replace(/\/+$/, '');
   if (/^\/*oauthredirect$/i.test(pathname)) return true;
-  // Our own links are goedboodschap:// and https (universal / app links); any other scheme is a
+  // Our own links are kar:// and https (universal / app links); any other scheme is a
   // provider redirect (reverse client id, application id).
-  return scheme !== null && scheme !== 'goedboodschap' && scheme !== 'https' && scheme !== 'http';
+  return scheme !== null && scheme !== 'kar' && scheme !== 'https' && scheme !== 'http';
 }
 
 /** expo-router `redirectSystemPath`: no navigation for an auth redirect, the path otherwise. */

@@ -167,7 +167,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       try {
         await backend.local.wipe(userId, engine);
       } catch (err) {
-        console.warn('Goedboodschap: local data could not be deleted, retrying at next start', err);
+        console.warn('Kar: local data could not be deleted, retrying at next start', err);
         const list = await readPendingWipes(backend);
         if (!list.includes(userId)) await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify([...list, userId])).catch(() => undefined);
       }
@@ -215,7 +215,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // again; afterwards the id leaves the queue, so a later start never deletes new offline edits.
       const queued = await readPendingWipes(backend);
       if (queued.includes(user.id)) {
-        await backend.local.wipe(user.id, null).catch((err: unknown) => console.warn('Goedboodschap: local data could not be deleted', err));
+        await backend.local.wipe(user.id, null).catch((err: unknown) => console.warn('Kar: local data could not be deleted', err));
         const rest = (await readPendingWipes(backend)).filter((x) => x !== user.id);
         await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify(rest)).catch(() => undefined);
         if (stale()) return;
@@ -274,7 +274,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         engine = await backend.local.openEngine(user, household.id);
       } catch (err) {
         // Locked, corrupt or full database: not a network problem, so not "Geen internet" (D-01).
-        console.warn('Goedboodschap: local database could not be opened', err);
+        console.warn('Kar: local database could not be opened', err);
         if (!stale()) setState({ kind: 'unavailable', user, reason: 'local' });
         return;
       }
@@ -447,7 +447,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           const rest = (await readPendingWipes(backend)).filter((x) => x !== id);
           await backend.kv.setItem(KV_KEYS.pendingWipes, JSON.stringify(rest)).catch(() => undefined);
         } catch (err) {
-          console.warn('Goedboodschap: local data could not be deleted', err);
+          console.warn('Kar: local data could not be deleted', err);
         }
       }
       if (!alive) return;

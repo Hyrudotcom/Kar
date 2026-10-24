@@ -1,4 +1,4 @@
--- Goedboodschap core schema (owner: backend). See docs/architecture.md section 3.
+-- Kar core schema (owner: backend). See docs/architecture.md section 3.
 -- Clients never write tables directly: every write goes through the RPCs in 000300_rpcs.sql.
 
 create schema if not exists private;

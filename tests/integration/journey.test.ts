@@ -45,7 +45,7 @@ afterEach(async () => {
 test('(e) sign up -> Thuis -> invite -> partner joins -> both edit -> partner leaves', async () => {
   // 1. Anna signs up with the code from the e-mail (Dutch template, code only, no magic link).
   const anna = await signUpWithMailedCode('journey-anna');
-  expect(anna.mail.subject).toBe('Je inlogcode voor Goedboodschap');
+  expect(anna.mail.subject).toBe('Je inlogcode voor Kar');
   expect(anna.mail.text).not.toMatch(/https?:\/\//);
   const annaUser: TestUser = { id: anna.user.id, email: anna.email, client: anna.client };
 
@@ -68,7 +68,7 @@ test('(e) sign up -> Thuis -> invite -> partner joins -> both edit -> partner le
 
   // 3. Invite: "Deel lijst" gives a code and link; asking again reuses the same code.
   const invite = await anna.households.createInvite(hh);
-  expect(invite).toMatchObject({ ok: true, url: expect.stringMatching(/^https:\/\/goedboodschap\.nl\/j\/[A-Z0-9]{6}$/) });
+  expect(invite).toMatchObject({ ok: true, url: expect.stringMatching(/^https:\/\/getkar\.nl\/j\/[A-Z0-9]{6}$/) });
   if (!invite.ok) throw new Error('unreachable');
   expect(await anna.households.createInvite(hh)).toMatchObject({ ok: true, code: invite.code });
 

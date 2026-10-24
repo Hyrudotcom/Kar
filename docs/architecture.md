@@ -1,4 +1,4 @@
-# Goedboodschap: architecture v1
+# Kar: architecture v1
 
 Status: authoritative for engineering. UX is governed by `design-spec.md` (discovery folder); this
 document governs data, sync, security and folder ownership. When the two disagree on UX, the design
@@ -71,8 +71,8 @@ egress proxy: prefix Expo CLI commands with `EXPO_OFFLINE=1`.
   `SqlDriverFactory.destroy(userId)`, which deletes the list, outbox, failed mutations, suggestion
   history and price cache. Logout with a non-empty outbox shows "Je hebt N wijzigingen die nog niet
   verstuurd zijn." [Toch uitloggen]. Leaving is disabled offline ("Verlaten kan alleen online").
-- **Deep links**: `https://goedboodschap.nl/j/<CODE>` (iOS associated domain, Android verified intent
-  filter, configured in `app.json`) and `goedboodschap://j/<CODE>` both route to `app/j/[code].tsx`.
+- **Deep links**: `https://getkar.nl/j/<CODE>` (iOS associated domain, Android verified intent
+  filter, configured in `app.json`) and `kar://j/<CODE>` both route to `app/j/[code].tsx`.
   Hosting the HTTPS fallback page (code + store buttons) is out of scope for this repo.
 
 ---
@@ -301,7 +301,7 @@ delete `invite_attempts` older than 2 days.
 |---|---|---|---|
 | `get_my_household()` | any | household (or null), role, members with `display_name` | |
 | `create_household(p_name text default 'Thuis')` | any | Ensure: returns the existing household (`created:false`) if already a member, else creates it with the caller as `owner`. | |
-| `create_invite(p_household_id uuid, p_replace bool default false)` | member; replace = owner | Reuse the unrevoked, unexpired invite; else revoke any old one and insert a new random code (`gen_random_bytes`, alphabet `INVITE_CODE_ALPHABET`, retry on collision). Returns `code, expires_at, url = 'https://goedboodschap.nl/j/' || code`. | `not_member`, `not_owner` |
+| `create_invite(p_household_id uuid, p_replace bool default false)` | member; replace = owner | Reuse the unrevoked, unexpired invite; else revoke any old one and insert a new random code (`gen_random_bytes`, alphabet `INVITE_CODE_ALPHABET`, retry on collision). Returns `code, expires_at, url = 'https://getkar.nl/j/' || code`. | `not_member`, `not_owner` |
 | `preview_invite(p_code text)` | any | Input upper-cased and trimmed. Returns household name, inviter display name, member count, `leaves_current_household`. Counts as an attempt for rate limiting. | `invalid_code`, `expired_code`, `already_member`, `rate_limited` |
 | `accept_invite(p_code text)` | any | Locks both households in id order. If the caller is alone in the current household: move its **open** items into the target (dedupe by name+unit → increment + alias; else re-home with a new seq/position), then delete the old household. If the current household has others: leave it (ownership transfer as below), items stay. Insert member row (`member`). | same as preview |
 | `leave_household(p_household_id uuid)` | member | Last member → delete household (cascade). Owner with others → longest-standing member (`joined_at`, then `user_id`) becomes owner. Client then wipes local data and calls `create_household()`. | `not_member` |

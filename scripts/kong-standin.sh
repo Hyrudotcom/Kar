@@ -8,7 +8,7 @@
 #   scripts/kong-standin.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT="${GB_PROJECT_ID:-goedboodschap}"
+PROJECT="${GB_PROJECT_ID:-kar}"
 NAME="supabase_kong_${PROJECT}"
 IMAGE="${GB_STANDIN_IMAGE:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 'supabase/storage-api')}"
 docker rm -f "$NAME" >/dev/null 2>&1 || true

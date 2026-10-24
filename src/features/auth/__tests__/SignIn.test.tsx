@@ -20,7 +20,7 @@ function Probe() {
 async function setup() {
   const backend = makeBackend();
   await renderApp(<Probe />, backend);
-  await screen.findByText('Goedboodschap');
+  await screen.findByText('Kar');
   return backend;
 }
 

@@ -1,4 +1,4 @@
-# Goedboodschap v1: stand van zaken
+# Kar v1: stand van zaken
 
 Datum: 23 oktober 2026 · Branch: `integration/v1` (code-stand `ad3116f`, "Fix round 4") · Nog **niet** samengevoegd met `main`.
 
@@ -124,7 +124,7 @@ Na elke test zijn beide lijsten **exact gelijk** aan de serverstand.
 - **Echt inloggen met Apple en Google.** De code is er en de stappen eromheen zijn getest met nagebootste antwoorden. Een echte aanmelding vraagt om een Apple Developer-account (Sign in with Apple, Services ID, sleutel), Google OAuth-client-id's voor iOS, Android en web, en de providerinstellingen in Supabase. Die gegevens ontbreken (de velden in `.env.example` zijn leeg). Op het web worden de Apple- en Google-knoppen niet getoond.
 - **Echte e-mail.** De code is in de tests via de beheer-API van de lokale stack opgehaald. Een echte mailserver (SMTP) is niet ingesteld en niet getest.
 - **Echte prijzen.** Er is vandaag geen gelicenseerde bron (`price-provider-verdict.md`). De schermen met resultaten zijn alleen getoond met een testfixture (fictieve winkels "Testwinkel Noord", "Testwinkel Zuid" en "Testwinkel Oost"). Die fixture is in de browser onderschept en nooit in een database geschreven.
-- **Universal links en App Links** (`https://goedboodschap.nl/j/<code>`). Hiervoor moet het domein gehost worden en moet de app ondertekend zijn. Dat valt buiten deze repo.
+- **Universal links en App Links** (`https://getkar.nl/j/<code>`). Hiervoor moet het domein gehost worden en moet de app ondertekend zijn. Dat valt buiten deze repo.
 - **Productie-Supabase, app-builds (EAS) en publicatie in de App Store en Play Store.** Niets daarvan is gedaan.
 - **Een pixelvergelijking met Listonic en Mandje.** De screenshots in de app-winkels werden door de proxy geblokkeerd (zie 5).
 
@@ -135,13 +135,13 @@ Na elke test zijn beide lijsten **exact gelijk** aan de serverstand.
 - Laatste visuele review: [`docs/visual-review-round-5.md`](visual-review-round-5.md). Dat is ronde 5 op code-stand `ad3116f`.
 - Laatste screenshots:
   - in de repo: [`docs/screenshots/round-5/`](screenshots/round-5/);
-  - in de gedeelde map: `goedboodschap/screenshots/round-5/`.
+  - in de gedeelde map: `goedboodschap/screenshots/round-5/` (projectmap).
 
   Het zijn 95 PNG's: 23 schermen × iPhone (390×844) en Android (412×915) × licht en donker, plus 3 detailuitsneden.
 
 **Uitkomst:**
 - De lijst is de rustigste van de drie apps: geen reclame, logo's of totalen. Er is één kopregel, een balk om snel toe te voegen, en strakke rijen.
-- Van Mandje is alleen het nuttige idee overgenomen: één totaal per winkel. Er komen geen aanbiedingen, klantenkaarten of een winkelkiezer bij. Anders dan Mandje toont Goedboodschap geen totaal bij een onvolledig mandje.
+- Van Mandje is alleen het nuttige idee overgenomen: één totaal per winkel. Er komen geen aanbiedingen, klantenkaarten of een winkelkiezer bij. Anders dan Mandje toont Kar geen totaal bij een onvolledig mandje.
 - Op twee punten is Listonic beter. De volgorde van de suggesties is minder slim: "kaa" geeft ook "Kaart" en "Kaarsen". En wie uitgenodigd wordt, moet bij ons een account hebben (een bewust geaccepteerd risico).
 - Telling: **0 grote fouten, 8 kleine (Minor), 13 details (Nit). Geen blokkade.** Geen enkele bevinding breekt de prijsregels. De belangrijkste open punten:
   - de links naar de voorwaarden en het privacybeleid zijn te kleine tikdoelen (16 pt);

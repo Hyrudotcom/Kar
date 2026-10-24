@@ -2,9 +2,9 @@
 import * as Clipboard from 'expo-clipboard';
 import { Platform, Share } from 'react-native';
 
-/** "Doe je boodschappen samen met mij in Goedboodschap: <url> · Code: <code>" (design-spec 4.2). */
+/** "Doe je boodschappen samen met mij in Kar: <url> · Code: <code>" (design-spec 4.2). */
 export function inviteMessage(url: string, code: string): string {
-  return `Doe je boodschappen samen met mij in Goedboodschap: ${url} · Code: ${code}`;
+  return `Doe je boodschappen samen met mij in Kar: ${url} · Code: ${code}`;
 }
 
 export type ShareOutcome = 'shared' | 'dismissed' | 'copied' | 'failed';

@@ -6,7 +6,7 @@ test('sign in with an e-mail code, add an item, two Dutch tabs, no unverified pr
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Goedboodschap' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Kar' })).toBeVisible();
   await page.getByRole('textbox', { name: 'E-mailadres' }).fill('anna@voorbeeld.nl');
   await page.getByRole('button', { name: 'Stuur code' }).click();
   await page.getByRole('textbox').first().fill('123456');

@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "Goedboodschap",
-    "slug": "goedboodschap",
+    "name": "Kar",
+    "slug": "kar",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "goedboodschap",
+    "scheme": "kar",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "nl.goedboodschap.app",
+      "bundleIdentifier": "com.hyrudotcom.kar",
       "usesAppleSignIn": true,
       "associatedDomains": [
-        "applinks:goedboodschap.nl"
+        "applinks:getkar.nl"
       ]
     },
     "android": {
@@ -23,7 +23,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "nl.goedboodschap.app",
+      "package": "com.hyrudotcom.kar",
       "intentFilters": [
         {
           "action": "VIEW",
@@ -31,7 +31,7 @@
           "data": [
             {
               "scheme": "https",
-              "host": "goedboodschap.nl",
+              "host": "getkar.nl",
               "pathPrefix": "/j/"
             }
           ],

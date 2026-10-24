@@ -5,7 +5,7 @@ import { BootScreen } from '@/src/features/session/GateScreens';
 import { normalizeInviteCode, useSession } from '@/src/features/session/SessionProvider';
 
 /**
- * https://goedboodschap.nl/j/<CODE> and goedboodschap://j/<CODE> (docs/architecture.md section 2).
+ * https://getkar.nl/j/<CODE> and kar://j/<CODE> (docs/architecture.md section 2).
  * Stores the code (SecureStore) and continues: signed in -> "Word je lid van …?" sheet over the list;
  * signed out -> sign-in, then straight to the confirmation.
  */

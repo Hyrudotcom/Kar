@@ -28,7 +28,7 @@ describe('Itemdetail', () => {
     expect(screen.getByTestId('detail-quantity').props.value).toBe('2');
     expect(screen.getByText('Hoeveelheid')).toBeTruthy();
     expect(screen.getByText('Notitie')).toBeTruthy();
-    expect(screen.getByText(/^Toegevoegd door jou · \d\d:\d\d$/)).toBeTruthy();
+    expect(screen.getByText(/^Toegevoegd door jou · (\d{1,2} [a-z]{3} · )?\d\d:\d\d$/)).toBeTruthy();
     expect(screen.getByLabelText('Verwijderen')).toBeTruthy();
     expect(screen.queryByText('Klaar')).toBeNull();
   });

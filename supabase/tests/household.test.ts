@@ -71,7 +71,7 @@ describe('create_invite', () => {
   test('one active code per household: reused while valid, any member may share', async () => {
     const H = await createHousehold(2);
     const a = await rpc(H.owner, 'create_invite', { p_household_id: H.hid });
-    expect(a).toEqual({ ok: true, code: expect.stringMatching(INVITE_CODE_REGEX), expires_at: expect.any(String), url: `https://goedboodschap.nl/j/${a.code}` });
+    expect(a).toEqual({ ok: true, code: expect.stringMatching(INVITE_CODE_REGEX), expires_at: expect.any(String), url: `https://getkar.nl/j/${a.code}` });
     const days = (Date.parse(a.expires_at) - Date.now()) / 86400000;
     expect(days).toBeGreaterThan(6.99);
     expect(days).toBeLessThanOrEqual(7.0001);

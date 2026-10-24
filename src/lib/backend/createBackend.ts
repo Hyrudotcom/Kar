@@ -12,7 +12,7 @@ export class BackendConfigError extends Error {}
 export function createBackend(): Backend {
   if (!isSupabaseConfigured()) {
     throw new BackendConfigError(
-      `Goedboodschap is niet goed geconfigureerd (EXPO_PUBLIC_SUPABASE_URL ${env.supabaseUrl ? 'gezet' : 'ontbreekt'}, EXPO_PUBLIC_SUPABASE_ANON_KEY ${env.supabaseAnonKey ? 'gezet' : 'ontbreekt'}).`,
+      `Kar is niet goed geconfigureerd (EXPO_PUBLIC_SUPABASE_URL ${env.supabaseUrl ? 'gezet' : 'ontbreekt'}, EXPO_PUBLIC_SUPABASE_ANON_KEY ${env.supabaseAnonKey ? 'gezet' : 'ontbreekt'}).`,
     );
   }
   return createSupabaseBackend();
