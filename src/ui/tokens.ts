@@ -46,6 +46,7 @@ export const typography = {
   callout: { fontSize: 15, lineHeight: 20, fontWeight: '400' },
   footnote: { fontSize: 13, lineHeight: 18, fontWeight: '400' },
 } as const;
+export type TypographyToken = keyof typeof typography;
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
 export const radius = { sm: 8, md: 12, lg: 20 } as const;
@@ -56,5 +57,8 @@ export const sizes = {
   rowMinHeight: 56,
   inputHeight: 48,
   buttonHeight: 48,
+  iconSize: 24,
 } as const;
 export const motion = { durationMs: 180, reducedDurationMs: 0, settleBeforeMoveMs: 1500, undoMs: 5000 } as const;
+/** Dynamic type: text scales with the system setting up to 200 % (design-spec 7). */
+export const MAX_FONT_SCALE = 2;

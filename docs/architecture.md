@@ -1,4 +1,4 @@
-# Goedboodschap: architecture v1
+# Kar: architecture v1
 
 Status: authoritative for engineering. UX is governed by `design-spec.md` (discovery folder); this
 document governs data, sync, security and folder ownership. When the two disagree on UX, the design
@@ -71,8 +71,8 @@ egress proxy: prefix Expo CLI commands with `EXPO_OFFLINE=1`.
   `SqlDriverFactory.destroy(userId)`, which deletes the list, outbox, failed mutations, suggestion
   history and price cache. Logout with a non-empty outbox shows "Je hebt N wijzigingen die nog niet
   verstuurd zijn." [Toch uitloggen]. Leaving is disabled offline ("Verlaten kan alleen online").
-- **Deep links**: `https://goedboodschap.nl/j/<CODE>` (iOS associated domain, Android verified intent
-  filter, configured in `app.json`) and `goedboodschap://j/<CODE>` both route to `app/j/[code].tsx`.
+- **Deep links**: `https://getkar.nl/j/<CODE>` (iOS associated domain, Android verified intent
+  filter, configured in `app.json`) and `kar://j/<CODE>` both route to `app/j/[code].tsx`.
   Hosting the HTTPS fallback page (code + store buttons) is out of scope for this repo.
 
 ---
@@ -205,7 +205,7 @@ RLS is enabled on every table in `public`. `anon` has no grants at all.
 | `profiles` | own row, or a co-member's row | update own row, columns `display_name`, `price_comparison_enabled` only (column grant). No insert/delete (trigger + `delete_account`). |
 | `households` | `private.is_member(id)` | none (RPC only) |
 | `household_members` | `private.is_member(household_id)` | none (RPC only) |
-| `invites` | `private.is_member(household_id)` | none (RPC only) |
+| `invites` | none: no client grant and no policy (clients get the code only from `create_invite`) | none (RPC only) |
 | `list_items` | `private.is_member(household_id)` | none (`apply_mutations` only) |
 | price reference tables | `authenticated` | none (service role ingestion) |
 | `price_match_overrides` | `private.is_member(household_id)` | insert/delete if `private.is_member(household_id)` |
@@ -221,8 +221,11 @@ id that exists in B returns `rejected/invalid` and leaks nothing).
   Postgres-changes are RLS-filtered, so only members receive them. Clients treat every event as a
   **nudge** to pull; payloads are never applied as data.
 - Membership loss: a trigger on `household_members` delete calls
-  `realtime.send(jsonb_build_object('household_id', old.household_id), 'membership_changed', 'user:' || old.user_id, true)`
-  (private broadcast channel). RLS on `realtime.messages` allows `select` when
+  `realtime.send(jsonb_build_object('household_id', old.household_id, 'reason', <reason>), 'membership_changed', 'user:' || old.user_id, true)`
+  (private broadcast channel; `MembershipChangedBroadcast` in `src/contracts/mutations.ts`). `reason` is
+  `removed`, `left`, `household_deleted` or `account_deleted`. After `accept_invite` the joiner also gets
+  `household_deleted` for its old solo household, so clients ignore broadcasts whose `household_id` is not
+  the current household. RLS on `realtime.messages` allows `select` when
   `realtime.topic() = 'user:' || auth.uid()`. Fallback (always on): membership is checked on every app
   open/foreground, and every `pull_changes`/`apply_mutations` returns `not_member`.
 
@@ -236,6 +239,9 @@ Every RPC returns `jsonb` with `ok: true | false`; expected failures are **value
 treats them as transient.
 
 ### 4.1 `apply_mutations(batch jsonb) returns jsonb`
+
+Called as `rpc('apply_mutations', { batch: req })`. Names are stored trimmed. A merge that would take
+the target over 99999 is `rejected/invalid`.
 
 Request `ApplyMutationsRequest = { household_id, mutations: Mutation[1..100] }`.
 
@@ -277,8 +283,12 @@ Per kind (server state at receive time decides; client clocks are never used):
    Because writers bump `last_seq` and write rows in the same locked transaction, everything ≤ `v_last` is committed.
 3. `has_more` = more than `p_limit` rows. `server_seq` (cursor) = last returned row's seq if `has_more`,
    else `v_last`.
-4. `reset_required = p_since_seq > 0 and p_since_seq < purged_before_seq` (client wipes `server_items`,
-   keeps the outbox, pulls from 0).
+4. `purged_before_seq` is the highest purged tombstone seq. `reset_required = p_since_seq > 0 and
+   (p_since_seq < purged_before_seq or p_since_seq > last_seq)` (the second case is a corrupt or foreign
+   cursor). When set, the response has `server_seq: 0` and no items; the client wipes `server_items`,
+   keeps the outbox and pulls from 0.
+   Only the first page of a pull from 0 leaves out tombstones: later pages have `since > 0` and can
+   contain tombstones, which clients upsert.
 5. Also returns `household` (`HouseholdRow`) so name changes arrive with pulls.
 
 Maintenance (`private.purge(retention)`, run by pg_cron when available, callable from tests): delete
@@ -291,7 +301,7 @@ delete `invite_attempts` older than 2 days.
 |---|---|---|---|
 | `get_my_household()` | any | household (or null), role, members with `display_name` | |
 | `create_household(p_name text default 'Thuis')` | any | Ensure: returns the existing household (`created:false`) if already a member, else creates it with the caller as `owner`. | |
-| `create_invite(p_household_id uuid, p_replace bool default false)` | member; replace = owner | Reuse the unrevoked, unexpired invite; else revoke any old one and insert a new random code (`gen_random_bytes`, alphabet `INVITE_CODE_ALPHABET`, retry on collision). Returns `code, expires_at, url = 'https://goedboodschap.nl/j/' || code`. | `not_member`, `not_owner` |
+| `create_invite(p_household_id uuid, p_replace bool default false)` | member; replace = owner | Reuse the unrevoked, unexpired invite; else revoke any old one and insert a new random code (`gen_random_bytes`, alphabet `INVITE_CODE_ALPHABET`, retry on collision). Returns `code, expires_at, url = 'https://getkar.nl/j/' || code`. | `not_member`, `not_owner` |
 | `preview_invite(p_code text)` | any | Input upper-cased and trimmed. Returns household name, inviter display name, member count, `leaves_current_household`. Counts as an attempt for rate limiting. | `invalid_code`, `expired_code`, `already_member`, `rate_limited` |
 | `accept_invite(p_code text)` | any | Locks both households in id order. If the caller is alone in the current household: move its **open** items into the target (dedupe by name+unit → increment + alias; else re-home with a new seq/position), then delete the old household. If the current household has others: leave it (ownership transfer as below), items stay. Insert member row (`member`). | same as preview |
 | `leave_household(p_household_id uuid)` | member | Last member → delete household (cascade). Owner with others → longest-standing member (`joined_at`, then `user_id`) becomes owner. Client then wipes local data and calls `create_household()`. | `not_member` |
@@ -332,7 +342,19 @@ create table history (normalized_name text not null, unit text not null, display
   use_count integer not null default 0, last_used_at integer not null, primary key (normalized_name, unit));
 create table price_cache (id integer primary key check (id = 1), result text not null,
   list_fingerprint text not null, computed_at integer not null);
+-- added by the sync builder:
+--   outbox.local_meta text: JSON with the local simulation at enqueue time (undo of a restore needs the
+--   previous quantity, which the server result does not carry).
+create table acked_log (id text primary key, kind text not null, payload text not null,  -- acked results,
+  result text not null, local_meta text, acked_at integer not null);                     -- kept 24 h for revert_add
+create table aliases (alias_id text primary key, target_id text not null);               -- mirror of private.item_aliases
 ```
+
+Engine API: the `SyncEngine` contract includes `dispose()`, `getHousehold()`, `notifyReauthenticated()`
+(call when the auth listener sees the same user again or a token refresh), `setAppActive()` (from
+AppState) and `readPriceCache()` / `writePriceCache()`. The price cache is only accessed through the
+engine, because all access to the per-user DB is serialized by one lock. Undo of "Wissen" is resolved by
+the engine from the `clear_checked` result (`affected_ids`).
 
 ### 5.2 Write path (optimistic, outbox first)
 
@@ -463,9 +485,12 @@ create table public.price_match_overrides (                 -- "Verkeerd product
 5. **Complete** = every compared (non-excluded) item is `verified` or `stale`. Only complete baskets
    get `total_cents` and are ranked ascending; the top one is `cheapest`, or `only_complete` if alone.
    Incomplete baskets show `priced_count` of `compared_count` and **no total**. Unknown never counts as 0.
-6. **State**: fewer than 2 chains with any verified-source observation → `unavailable` (v1 today);
+6. **State**: fewer than 2 chains with a *fresh* (≤ 14 d, i.e. verified or stale) verified-source
+   observation → `unavailable` (v1 today);
    no compared items → `empty`; ≥ 1 complete → `ranked`; else `no_complete`.
-7. Integer cents throughout; deposit (statiegeld) excluded. Single-store baskets only: 2/3-store routes
+7. Integer cents throughout; deposit (statiegeld) excluded. Detergents count wasbeurten as `stuk`
+   (reference 20 = 20 wasbeurten). Each `BasketLine` carries `unit_price` (shelf price per kg / l / stuk of
+   the chosen package) and `promotion_valid_until` (only when a promotion was applied). Single-store baskets only: 2/3-store routes
    and subscriptions are deferred.
 8. **Cache**: last result in `price_cache` with `list_fingerprint`; if the current fingerprint differs,
    drop the "Goedkoopste" label and show "Je lijst is gewijzigd sinds 10:42".
@@ -489,8 +514,11 @@ promotions threshold; 7/14-day boundaries; missing `observed_at`; override makes
   `"3x brood"`, `"1,5 l melk"`), plus `formatQuantity(q, unit)` (nothing for 1 stuk, decimal comma).
 - The "nothing moves under your finger" layer (1.5 s settle, scroll compensation) lives in the UI, on
   top of `ListSnapshot`.
-- Web export is for visual inspection only. On web, inject an in-memory `SqlDriver` and a fake
-  transport when `EXPO_PUBLIC_SUPABASE_URL` is unset, so screens render without a backend.
+- Web export is for visual inspection only: `createBackend.web.ts` always uses the in-memory demo backend
+  (`src/lib/demo`, `DirectEngine` on the sync builder's `FakeServer`). Device builds always use Supabase +
+  the real sync engine (expo-sqlite, NetInfo) and do not bundle the demo; a device build without
+  Supabase configuration shows a configuration error instead of silently falling back to demo data.
+- `react-native-url-polyfill/auto` is imported first in `app/_layout.tsx` (supabase-js on Hermes).
 
 ---
 

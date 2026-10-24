@@ -4,6 +4,8 @@
  *  - unit: pure TypeScript in Node                                  -> src/shared/**, src/price/**, src/contracts/**
  *  - sync: sync engine in Node with better-sqlite3 + fake transport -> src/sync/**
  *  - db:   SQL/RLS/RPC integration against the local Supabase stack -> supabase/tests/** (npm run test:db)
+ *  - integration: real auth users + real sync engine + Supabase API/Realtime of the local stack
+ *          -> tests/integration/** (npm run test:integration; needs the API on :54321, see README)
  */
 const moduleNameMapper = { '^@/(.*)$': '<rootDir>/$1' };
 const nodeTransform = { '^.+\\.[jt]sx?$': ['babel-jest', { presets: ['babel-preset-expo'] }] };
@@ -44,6 +46,14 @@ module.exports = {
       transform: nodeTransform,
       moduleNameMapper,
       testMatch: ['<rootDir>/supabase/tests/**/*.test.[jt]s'],
+    },
+    {
+      displayName: 'integration',
+      testEnvironment: 'node',
+      transform: nodeTransform,
+      moduleNameMapper,
+      testMatch: ['<rootDir>/tests/integration/**/*.test.[jt]s'],
+      globalSetup: '<rootDir>/tests/integration/globalSetup.js',
     },
   ],
 };

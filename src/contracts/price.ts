@@ -154,7 +154,13 @@ export interface BasketLine {
   line_total_cents: number | null; // null when status = unknown. NEVER 0 for unknown.
   overage: { amount: number; unit: BaseUnit } | null; // only when > 25%
   age_days: number | null;
+  /** Exact observation time of the used price (age_days is floored); null when status = unknown. */
+  observed_at: IsoTimestamp | null;
   promotion_applied: boolean;
+  /** End of the applied promotion ("t/m zo 26 okt"); null when no promotion was applied. */
+  promotion_valid_until: IsoTimestamp | null;
+  /** Shelf price per kg / l / stuk of the chosen package ("€1,29/kg"); null when status = unknown. */
+  unit_price: { cents: number; per: 'kg' | 'l' | 'stuk' } | null;
 }
 
 export interface StoreBasket {
@@ -163,12 +169,13 @@ export interface StoreBasket {
   complete: boolean;
   /** Only for complete baskets. */
   total_cents: number | null;
-  /** Difference to the cheapest complete basket ("+€2,68"); null for the cheapest and incomplete ones. */
+  /** Difference to the cheapest complete basket ("+€2,68"); null for the cheapest (and tied) and incomplete ones. */
   delta_cents: number | null;
   priced_count: number; // "10 van 12 prijzen"
   compared_count: number;
   stale_count: number;
-  label: 'cheapest' | 'only_complete' | null;
+  /** 'tied': shares the lowest total with another store ('Even goedkoop', no single winner). */
+  label: 'cheapest' | 'tied' | 'only_complete' | null;
   lines: BasketLine[];
 }
 

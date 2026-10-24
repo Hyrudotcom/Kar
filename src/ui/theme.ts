@@ -1,9 +1,13 @@
 import { useColorScheme } from 'react-native';
 
-import { palette, type Colors } from './tokens';
+import { palette, type ColorScheme, type Colors } from './tokens';
+
+/** The current system scheme, 'light' unless the system says dark. */
+export function useScheme(): ColorScheme {
+  return useColorScheme() === 'dark' ? 'dark' : 'light';
+}
 
 /** Returns the colour tokens for the current system scheme. Owner: mobile. */
 export function useColors(): Colors {
-  const scheme = useColorScheme();
-  return scheme === 'dark' ? palette.dark : palette.light;
+  return palette[useScheme()];
 }

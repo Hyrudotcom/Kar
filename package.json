@@ -1,5 +1,5 @@
 {
-  "name": "goedboodschap",
+  "name": "kar",
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
@@ -20,21 +20,19 @@
     "expo-splash-screen": "~58.0.11",
     "expo-sqlite": "~58.0.13",
     "expo-status-bar": "~58.0.4",
-    "expo-symbols": "~58.0.4",
     "expo-system-ui": "~58.0.6",
     "expo-web-browser": "~58.0.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0",
     "react-native-gesture-handler": "~3.3.0",
-    "react-native-get-random-values": "^2.0.0",
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.0",
+    "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "~0.21.4",
     "react-native-worklets": "0.13.0",
-    "zod": "^4.6.7",
-    "zustand": "^5.0.16"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
@@ -67,6 +65,8 @@
     "test:sync": "jest --selectProjects sync --passWithNoTests",
     "test:price": "jest --selectProjects unit --passWithNoTests",
     "test:db": "jest --selectProjects db --runInBand --passWithNoTests",
+    "test:integration": "jest --selectProjects integration --runInBand",
+    "db:gateway": "scripts/kong-standin.sh",
     "test:e2e": "playwright test",
     "export:web": "expo export --platform web --output-dir dist",
     "serve:web": "node scripts/serve-dist.mjs 8099",

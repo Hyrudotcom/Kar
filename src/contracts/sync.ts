@@ -2,7 +2,7 @@
  * Client sync engine contract. Owner: architect; implemented in src/sync/** (sync builder),
  * consumed by app/** + src/features/** (mobile builder). See docs/architecture.md section 5.
  */
-import type { ListItemRow, Unit, Uuid } from './domain';
+import type { HouseholdRow, ListItemRow, Unit, Uuid } from './domain';
 import type { ApplyMutationsRequest, ApplyMutationsResponse, Mutation, PullChangesResponse, RejectReason } from './mutations';
 
 // ---------------------------------------------------------------------------
@@ -124,11 +124,18 @@ export type UndoAction =
    * restored -> set_checked(target, true) + update_item quantity back to the previous value.
    */
   | { kind: 'revert_add'; mutationId: Uuid }
-  | { kind: 'restore_item'; itemId: Uuid }
+  /** `clearMutationId`: undo of "Wissen"; the item is restored only if that very clear removed it. */
+  | { kind: 'restore_item'; itemId: Uuid; clearMutationId?: Uuid }
   | { kind: 'delete_item'; itemId: Uuid }
   | { kind: 'set_checked'; itemId: Uuid; checked: boolean }
   | { kind: 'increment_quantity'; itemId: Uuid; delta: number }
-  | { kind: 'update_item'; itemId: Uuid; fields: { quantity?: number; name?: string; note?: string; unit?: Unit } };
+  | {
+      kind: 'update_item';
+      itemId: Uuid;
+      fields: { quantity?: number; name?: string; note?: string; unit?: Unit; exclude_from_comparison?: boolean };
+    };
+// Undo of "Wissen" is resolved by the engine from the clear_checked server result (affected_ids ->
+// restore_item per id); no separate `revert_clear` action is needed.
 
 export type LocalOutcome = 'added' | 'merged' | 'restored' | 'updated' | 'noop';
 
@@ -157,9 +164,30 @@ export interface AddItemInput {
   note?: string;
 }
 
+/** Last price comparison result, stored in the per-user DB (wiped with it, design-spec 4.5 rule 9). */
+export interface PriceCacheEntry {
+  /** Any JSON-serializable value (the price engine's ComparisonResult). */
+  result: unknown;
+  listFingerprint: string;
+  computedAt: number;
+}
+
 export interface SyncEngine {
   start(): Promise<void>;
   stop(): Promise<void>;
+  /** stop() and close the database handle. */
+  dispose(): Promise<void>;
+
+  /** Last household row received with a pull (name changes arrive with pulls), or null before the first pull. */
+  getHousehold(): HouseholdRow | null;
+  /** The same user id signed in again / token refreshed after "Log opnieuw in": clears needsReauth and syncs. */
+  notifyReauthenticated(): void;
+  /** AppState foreground/background. Foreground syncs; the 60 s safety pull only runs while active. */
+  setAppActive(active: boolean): void;
+
+  /** Price cache, serialized with all other access to the per-user DB (never open the DB directly). */
+  readPriceCache(): Promise<PriceCacheEntry | null>;
+  writePriceCache(entry: PriceCacheEntry): Promise<void>;
 
   getSnapshot(): ListSnapshot;
   subscribe(listener: (snapshot: ListSnapshot) => void): () => void;
@@ -183,6 +211,13 @@ export interface SyncEngine {
   discardFailed(mutationIds: Uuid[]): Promise<void>;
   /** Plain-text export of failed mutations ("Kopieer als tekst"). */
   failedAsText(): string;
+  /**
+   * Failed mutations plus every pending outbox row, for the removal flow ("N wijzigingen konden niet
+   * worden opgeslagen" + "Kopieer als tekst") before the local file is wiped.
+   */
+  unsent(): { count: number; text: string };
+  /** The id an item lives under now (follows server merge/restore aliases of an add). */
+  resolveId(itemId: Uuid): Uuid;
 
   /** Household suggestion history (design-spec 3, SuggestionList), most used first. */
   getHistory(): Promise<HistoryEntry[]>;

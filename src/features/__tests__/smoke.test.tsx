@@ -1,15 +1,16 @@
-import { render, screen } from '@testing-library/react-native';
+import { screen } from '@testing-library/react-native';
 
-import GoedkoopsteRouteScreen from '@/app/(tabs)/route';
+import { RouteScreen } from '../route/RouteScreen';
+import { makeBackend, renderReady, signIn } from './helpers';
 
-jest.mock('react-native-safe-area-context', () => {
-  const { View } = jest.requireActual('react-native');
-  return { SafeAreaView: View, SafeAreaProvider: View, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
-});
+jest.mock('react-native-safe-area-context', () => require('./mocks').safeAreaMock());
+jest.mock('expo-router', () => ({ useRouter: () => require('./helpers').mockRouter }));
 
 describe('scaffold smoke', () => {
   it('shows the honest v1 price state in Dutch', async () => {
-    await render(<GoedkoopsteRouteScreen />);
-    expect(screen.getByText('Geen geverifieerde prijzen beschikbaar')).toBeTruthy();
+    const backend = makeBackend();
+    await signIn(backend);
+    await renderReady(<RouteScreen />, backend);
+    expect(await screen.findByText('Geen geverifieerde prijzen beschikbaar')).toBeTruthy();
   });
 });
