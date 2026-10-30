@@ -13,18 +13,12 @@
       "ios": {
         "simulator": false
       },
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": ""
-      }
+      "environment": "preview"
     },
     "production": {
       "channel": "production",
       "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": ""
-      }
+      "environment": "production"
     }
   },
   "submit": {
