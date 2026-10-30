@@ -65,6 +65,12 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "bb5ffeaf-18e1-4c1e-9198-fdeace09374b"
+      }
+    },
+    "owner": "hyrudotcom"
   }
 }

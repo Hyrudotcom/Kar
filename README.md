@@ -5,6 +5,7 @@ Minimalistische gedeelde boodschappenlijst voor iOS en Android (Expo + Supabase)
 - Architectuur, schema, RPC- en sync-contract, mapeigendom: [`docs/architecture.md`](docs/architecture.md)
 - Gedeelde TypeScript-contracten: `src/contracts/`
 - UX-specificatie: `design-spec.md` (discovery-map)
+- Op echte telefoons installeren (Supabase, EAS, TestFlight/APK): [`docs/installeren.md`](docs/installeren.md)
 
 ```bash
 npm run typecheck && npm run lint && npm test   # geen netwerk of database nodig
